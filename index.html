@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Sun Path 3D · KV [vG23]</title>
+  <title>Sun Path 3D · KV [vG24]</title>
   <link href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -39,7 +39,8 @@ const COLOR={
   LABELS:'#94a3b8',
   SUN:['#D97706','#F59E0B'],
 };
-const L={PATHS:'sp-paths',COMPASS:'sp-compass',LABELS:'sp-labels',DOT:'sp-dot',POLE:'sp-pole',DAYARC:'sp-dayarc'};
+const L={PATHS:'sp-paths',COMPASS:'sp-compass',LABELS:'sp-labels'};
+const LIVE_LAYER='☀ SP - Hoje (Live)'; // layer permanente para sol + arco do dia
 const _n=new Date(),_doy=Math.floor((_n-new Date(_n.getFullYear(),0,0))/864e5);
 const INIT={lat:-23.5558,lng:-46.6396,hr:Math.round((_n.getHours()+_n.getMinutes()/60)*4)/4,doy:Math.max(1,Math.min(365,_doy)),radius:100};
 const seasons=lat=>({sum:lat<0?355:172,win:lat<0?172:355,eqMar:79,eqSep:266,sumLbl:lat<0?'Dez':'Jun',winLbl:lat<0?'Jun':'Dez'});
@@ -206,48 +207,49 @@ async function plotWireframes(lat,lng,radius,doy){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  ARCO DO DIA (h+=0.02 → ultra suave; amarelo)
+//  LIVE PREVIEW — Sol + Arco do Dia via updateGeoJSONLayerContents
+//
+//  Usa a MESMA lógica nativa das camadas fixas (não addTempLayerGeoJSON)
+//  garantindo que Sol e Arco flutuem em 3D sem achatar a geometria.
+//
+//  Estrutura das features:
+//   • Arco do dia   → segLine (stroke/baseHeight)
+//   • Mastro        → ticks horizontais fatiados (stroke/baseHeight crescente)
+//   • Sol           → turf.point (fill + color + radius + baseHeight)
 // ══════════════════════════════════════════════════════════════════════════
-async function plotDayArc(lat,lng,doy,radius){
-  await rm(L.DAYARC);
-  const pts=arcCoords3D(lat,lng,doy,radius,0.02);
-  if(pts.length<2)return;
-  const feats=segLine(pts,COLOR.DAY_ARC,3,0.95);
-  if(!feats.length)return;
-  await rpc.invoke('addTempLayerGeoJSON',[L.DAYARC,fc(feats),LINE_PAINT]);
-}
+async function plotLivePreview(lat,lng,doy,hr,radius){
+  const s=calcSun(lat,lng,doy,hr);
+  const liveFeats=[];
 
-// ══════════════════════════════════════════════════════════════════════════
-//  SOL (circle viewport) + MASTRO (ticks baseHeight)
-// ══════════════════════════════════════════════════════════════════════════
-async function plotSun(lat,lng,doy,hr,radius){
-  await rm(L.DOT);await rm(L.POLE);
-  const s=calcSun(lat,lng,doy,hr);if(!s.day)return;
-  const a=s.alt*D2R,z=s.az*D2R;
-  const coordZ=Math.max(0,radius*Math.sin(a));
-  const[sLng,sLat]=local2geo(radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),lng,lat);
-  const col=s.alt>20?COLOR.SUN[1]:COLOR.SUN[0];
-  // Mastro: ticks cruzados com stroke + baseHeight (zero sombra!)
-  const step=Math.max(0.5,coordZ/60),tk=Math.max(0.4,radius*0.004);
-  const poleFeats=[];
-  for(let z2=0;z2<=coordZ;z2+=step){
-    const[pN,pS]=[local2geo(0,tk,sLng,sLat),local2geo(0,-tk,sLng,sLat)];
-    const[pE,pW]=[local2geo(tk,0,sLng,sLat),local2geo(-tk,0,sLng,sLat)];
-    const props={stroke:col,'stroke-width':1,'stroke-opacity':0.35,baseHeight:z2,_baseHeight:z2,height:0};
-    poleFeats.push(
-      {type:'Feature',geometry:{type:'LineString',coordinates:[pN,pS]},properties:props},
-      {type:'Feature',geometry:{type:'LineString',coordinates:[pE,pW]},properties:{...props}}
-    );
+  if(s.day){
+    const a=s.alt*D2R,z=s.az*D2R;
+    const coordZ=Math.max(0,radius*Math.sin(a));
+    const[sLng,sLat]=local2geo(radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),lng,lat);
+    const col=s.alt>20?COLOR.SUN[1]:COLOR.SUN[0];
+
+    // 1. Arco do dia — microsseguimentos h+=0.04, stroke nativo
+    liveFeats.push(...segLine(arcCoords3D(lat,lng,doy,radius,0.04),COLOR.DAY_ARC,4,0.95));
+
+    // 2. Mastro — ticks horizontais fatiados com baseHeight crescente
+    const nPole=Math.max(4,Math.ceil(coordZ/8));
+    const tk=Math.max(0.3,radius*0.003); // offset horizontal ~0.3% do raio
+    const[pA,pB]=[local2geo(-tk,0,sLng,sLat),local2geo(tk,0,sLng,sLat)];
+    for(let i=0;i<=nPole;i++){
+      const midZ=(i/nPole)*coordZ;
+      liveFeats.push({type:'Feature',geometry:{type:'LineString',coordinates:[pA,pB]},
+        properties:{stroke:col,'stroke-width':1.5,'stroke-opacity':0.4,baseHeight:midZ,_baseHeight:midZ,height:0}});
+    }
+
+    // 3. Sol — Point nativo: Giraffe lê fill+color+radius+baseHeight → esfera 3D
+    liveFeats.push(turf.point([sLng,sLat],{
+      fill:col, color:col, radius:5,
+      baseHeight:coordZ, _baseHeight:coordZ, height:0,
+    }));
   }
-  if(poleFeats.length)await rpc.invoke('addTempLayerGeoJSON',[L.POLE,fc(poleFeats),LINE_PAINT]);
-  // Sol como circle viewport
-  await rpc.invoke('addTempLayerGeoJSON',[L.DOT,{type:'FeatureCollection',features:[
-    {type:'Feature',geometry:{type:'Point',coordinates:[sLng,sLat,coordZ]},properties:{color:col}}
-  ]},{type:'circle',paint:{
-    'circle-radius':10,'circle-color':['get','color'],'circle-opacity':1,
-    'circle-stroke-width':2,'circle-stroke-color':'#fff','circle-stroke-opacity':0.9,
-    'circle-pitch-alignment':'viewport'
-  }}]);
+
+  // Serialização segura + envio ao layer permanente
+  await rpc.invoke('updateGeoJSONLayerContents',
+    [LIVE_LAYER,{type:'FeatureCollection',features:JSON.parse(JSON.stringify(liveFeats))}]);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -320,7 +322,7 @@ function downloadGLB(lat,lng,radius){
   const url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=`sun-path-${Math.abs(lat).toFixed(1)}${lat<0?'S':'N'}-r${radius}m.glb`;
   document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
-  console.log(`[vG23] GLB ${(blob.size/1024).toFixed(0)}KB — KHR_materials_unlit`);
+  console.log(`[vG24] GLB ${(blob.size/1024).toFixed(0)}KB — KHR_materials_unlit`);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -372,7 +374,7 @@ function SolarApp(){
   const seas=useMemo(()=>seasons(lat),[lat]);
   const sunNow=useMemo(()=>calcSun(lat,lng,doy,hr),[lat,lng,doy,hr]);
   const effRad=Math.round(rad*scale);
-  const syncT=useRef(null),dotT=useRef(null),genT=useRef(null),gen=useRef(0);
+  const syncT=useRef(null),liveT=useRef(null),genT=useRef(null),gen=useRef(0);
 
   // Centro inicial do mapa
   useEffect(()=>{(async()=>{try{const b=await rpc.invoke('getMapBounds',[]);const ring=b?.features?.[0]?.geometry?.coordinates?.[0];if(!ring)return;const lo=ring.map(c=>c[0]),la=ring.map(c=>c[1]);setLng(parseFloat(((Math.min(...lo)+Math.max(...lo))/2).toFixed(6)));setLat(parseFloat(((Math.min(...la)+Math.max(...la))/2).toFixed(6)));}catch{}})();},[]);
@@ -380,10 +382,19 @@ function SolarApp(){
   // Sync sol (debounce 150ms, sem layerTree)
   useEffect(()=>{if(syncT.current)clearTimeout(syncT.current);syncT.current=setTimeout(async()=>{setSync('syncing');const r=await syncGiraffeSun(sunNow.az,sunNow.alt);setSync(r.ok?'ok':r.why);},150);return()=>clearTimeout(syncT.current);},[sunNow]);
 
-  // Sol dinâmico
-  useEffect(()=>{if(!show)return;if(dotT.current)clearTimeout(dotT.current);dotT.current=setTimeout(()=>plotSun(lat,lng,doy,hr,effRad),80);return()=>clearTimeout(dotT.current);},[lat,lng,doy,hr,effRad,show]);
+  // ── LIVE PREVIEW unificado (sol + arco do dia via updateGeoJSONLayerContents) ──
+  useEffect(()=>{
+    if(!show){
+      // Toggle OFF → limpa o layer enviando FeatureCollection vazia
+      rpc.invoke('updateGeoJSONLayerContents',[LIVE_LAYER,{type:'FeatureCollection',features:[]}]).catch(()=>{});
+      return;
+    }
+    if(liveT.current)clearTimeout(liveT.current);
+    liveT.current=setTimeout(()=>plotLivePreview(lat,lng,doy,hr,effRad).catch(()=>{}),80);
+    return()=>clearTimeout(liveT.current);
+  },[lat,lng,doy,hr,effRad,show]);
 
-  // Carta completa (compasso + wireframes + arco do dia)
+  // Carta estática (compasso + wireframes) — temp layers normais
   useEffect(()=>{
     if(!show){Object.values(L).forEach(rm);return;}
     const id=++gen.current;if(genT.current)clearTimeout(genT.current);
@@ -391,15 +402,18 @@ function SolarApp(){
       if(id!==gen.current)return;
       await plotCompass(lat,lng,effRad);
       await plotWireframes(lat,lng,effRad,doy);
-      await plotDayArc(lat,lng,doy,effRad);
     },300);return()=>{clearTimeout(genT.current);gen.current=id+1;};
   },[lat,lng,effRad,doy,show]);
 
-  useEffect(()=>()=>Object.values(L).forEach(rm),[]);
+  // Limpeza ao desmontar
+  useEffect(()=>()=>{
+    Object.values(L).forEach(rm);
+    rpc.invoke('updateGeoJSONLayerContents',[LIVE_LAYER,{type:'FeatureCollection',features:[]}]).catch(()=>{});
+  },[]);
 
   // ── CENTRALIZAR NA SELEÇÃO ────────────────────────────────────────────
   const handleCenter=async()=>{
-    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG23] ✓ Centro via ${src}:`,cLat.toFixed(5),cLng.toFixed(5));};
+    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG24] ✓ Centro via ${src}:`,cLat.toFixed(5),cLng.toFixed(5));};
     const centOf=feats=>{try{const v=feats.filter(f=>{const g=f?.geometry||f;return g?.type&&g?.coordinates;}).map(f=>f.type==='Feature'?f:{type:'Feature',geometry:f.geometry||f,properties:{}});if(!v.length)return null;return turf.centroid({type:'FeatureCollection',features:v});}catch{return null;}};
     try{
       // 1. selectedFeatures
@@ -415,7 +429,7 @@ function SolarApp(){
       // 5. centro do mapa visível
       const b=await rpc.invoke('getMapBounds',[]);const ring=b?.features?.[0]?.geometry?.coordinates?.[0];
       if(ring){const lo=ring.map(c=>c[0]),la=ring.map(c=>c[1]);applyC((Math.min(...lo)+Math.max(...lo))/2,(Math.min(...la)+Math.max(...la))/2,'mapBounds');}
-    }catch(e){console.warn('[vG23] center:',e?.message);}
+    }catch(e){console.warn('[vG24] center:',e?.message);}
   };
 
   // ── BAKE — layers permanentes com propriedades nativas ────────────────
@@ -467,7 +481,7 @@ function SolarApp(){
   return h('div',{className:'h-screen flex flex-col p-2 gap-2 bg-[#0f1117]'},
     h('div',{className:'flex items-center justify-between border-b border-slate-800 pb-2 shrink-0'},
       h('div',null,
-        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG23]'),
+        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG24]'),
         h('p',{className:'text-[10px] text-slate-600'},`${lat.toFixed(4)}° · ${lng.toFixed(4)}°${scale!==1?` · ×${scale.toFixed(1)}=${effRad}m`:''}`)
       ),
       syncLabel&&h('span',{className:`text-[9px] px-1.5 py-0.5 bg-slate-900 rounded ${syncCls}`},syncLabel)
