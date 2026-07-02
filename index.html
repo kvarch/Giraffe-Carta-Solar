@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Sun Path 3D · KV [vG25]</title>
+  <title>Sun Path 3D · KV [vG26]</title>
   <link href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -29,19 +29,14 @@ import*as turf from'https://esm.sh/@turf/turf@6.5.0';
 //  CONSTANTES
 // ══════════════════════════════════════════════════════════════════════════
 const D2R=Math.PI/180;
-// Paleta unificada — usada em temp layers, bake E GLB
 const COLOR={
   MONTHS:['#fff7ad','#ffe491','#ffd175','#ffbe59','#ffaa3d','#ff9621','#ff8205','#f26e00','#e55a00','#d84600','#cc3200','#bf1e00'],
   ANALEMMAS:'#4d8fbf',
   COMPASS:'#4a5568',
-  COMPASS_TICK:'#4a5568',
   DAY_ARC:'#F59E0B',
   LABELS:'#94a3b8',
   SUN:['#D97706','#F59E0B'],
 };
-const L={PATHS:'sp-paths',COMPASS:'sp-compass',LABELS:'sp-labels'}; // legado: limpeza de temp layers antigos
-const CHART_LAYER='☀ SP - Carta Solar';   // permanente: compasso + 12 arcos + analemas + labels
-const LIVE_LAYER='☀ SP - Hoje (Live)';    // permanente: sol + arco do dia + mastro
 const _n=new Date(),_doy=Math.floor((_n-new Date(_n.getFullYear(),0,0))/864e5);
 const INIT={lat:-23.5558,lng:-46.6396,hr:Math.round((_n.getHours()+_n.getMinutes()/60)*4)/4,doy:Math.max(1,Math.min(365,_doy)),radius:100};
 const seasons=lat=>({sum:lat<0?355:172,win:lat<0?172:355,eqMar:79,eqSep:266,sumLbl:lat<0?'Dez':'Jun',winLbl:lat<0?'Jun':'Dez'});
@@ -75,24 +70,9 @@ function calcSun(lat,lng,doy,hr){
 //  HELPERS
 // ══════════════════════════════════════════════════════════════════════════
 const local2geo=(x,y,oLng,oLat)=>[oLng+x/(111320*Math.cos(oLat*D2R)),oLat+y/111320];
-const fc=feats=>({type:'FeatureCollection',features:feats});
-const rm=async id=>{try{await rpc.invoke('removeTempLayer',[id]);}catch{}};
 
-// ══════════════════════════════════════════════════════════════════════════
-//  NÚCLEO — segLine: microsseguimentos com baseHeight + propriedades nativas
-//
-//  Propriedades geradas (lidas nativamente pelo Giraffe):
-//    stroke          → cor da linha (hex)
-//    stroke-width    → espessura em px
-//    stroke-opacity  → opacidade 0–1
-//    baseHeight      → elevação em metros (Z do sol naquele ponto)
-//    _baseHeight     → alias para compatibilidade com temp layers
-//    height          → 0 (vetor puro; sem espessura vertical → sombra zero)
-//
-//  No temp layer: paint usa ['get','stroke'] etc.
-//  No bake permanente: Giraffe lê stroke/stroke-width/stroke-opacity nativamente.
-// ══════════════════════════════════════════════════════════════════════════
-function segLine(coords3D, stroke, strokeWidth, strokeOpacity){
+// Microssegmentos de linha com baseHeight — o padrão 3D que FUNCIONA em rawSections
+function segLine(coords3D,stroke,strokeWidth,strokeOpacity){
   const segs=[];
   for(let i=0;i<coords3D.length-1;i++){
     const[lng1,lat1,z1]=coords3D[i],[lng2,lat2,z2]=coords3D[i+1];
@@ -100,27 +80,11 @@ function segLine(coords3D, stroke, strokeWidth, strokeOpacity){
     const midZ=Math.max(0,(z1+z2)/2);
     segs.push({type:'Feature',
       geometry:{type:'LineString',coordinates:[[lng1,lat1],[lng2,lat2]]},
-      properties:{
-        stroke,
-        'stroke-width':strokeWidth,
-        'stroke-opacity':strokeOpacity,
-        baseHeight:midZ,
-        _baseHeight:midZ,
-        height:0,
-      }
-    });
+      properties:{stroke,'stroke-width':strokeWidth,'stroke-opacity':strokeOpacity,baseHeight:midZ,_baseHeight:midZ,height:0}});
   }
   return segs;
 }
 
-// Paint unificado para todos os temp layers de linha
-const LINE_PAINT={type:'line',paint:{
-  'line-color':['get','stroke'],
-  'line-width':['get','stroke-width'],
-  'line-opacity':['get','stroke-opacity'],
-}};
-
-// Gera coordenadas 3D [lng, lat, Z] de um arco solar
 function arcCoords3D(lat,lng,doy,radius,step=0.04){
   const pts=[];
   for(let hh=0;hh<=24;hh+=step){
@@ -147,11 +111,10 @@ async function syncGiraffeSun(az,alt){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  CARTA ESTÁTICA — compasso + 12 arcos + analemas + labels
-//  Escrita em LAYER PERMANENTE (updateGeoJSONLayerContents):
-//   • renderiza 3D corretamente via stroke/baseHeight (comprovado)
-//   • persiste mesmo com o app fechado
+//  GERADORES DE FEATURES (todas com stroke + baseHeight → 3D em rawSections)
 // ══════════════════════════════════════════════════════════════════════════
+
+// Compasso Ladybug: 2 anéis externos + ticks + labels
 function compassFeatures(lat,lng,radius){
   const ctr=[lng,lat],R=radius,R1=radius*0.95,feats=[];
   const or=[];for(let a=0;a<=360;a+=2)or.push(turf.destination(turf.point(ctr),R/1000,a,{units:'kilometers'}).geometry.coordinates);
@@ -162,37 +125,26 @@ function compassFeatures(lat,lng,radius){
     const iL=a%30===0,rT=iL?R*0.90:R*0.95;
     const p1=turf.destination(turf.point(ctr),rT/1000,a,{units:'kilometers'}).geometry.coordinates;
     const p2=turf.destination(turf.point(ctr),R/1000,a,{units:'kilometers'}).geometry.coordinates;
-    feats.push(turf.lineString([p1,p2],{stroke:COLOR.COMPASS_TICK,'stroke-width':iL?1.2:0.7,'stroke-opacity':iL?0.6:0.3,baseHeight:0,_baseHeight:0,height:0}));
+    feats.push(turf.lineString([p1,p2],{stroke:COLOR.COMPASS,'stroke-width':iL?1.2:0.7,'stroke-opacity':iL?0.6:0.3,baseHeight:0,_baseHeight:0,height:0}));
   }
   for(let a=0;a<360;a+=30){
     let lbl=a+'°';if(a===0)lbl='N';else if(a===90)lbl='L';else if(a===180)lbl='S';else if(a===270)lbl='O';
-    feats.push(turf.destination(turf.point(ctr),(R+15)/1000,a,{units:'kilometers',properties:{label:lbl,stroke:COLOR.LABELS,fill:COLOR.LABELS,color:COLOR.LABELS,radius:1,baseHeight:0,_baseHeight:0,height:0}}));
+    feats.push(turf.destination(turf.point(ctr),(R+15)/1000,a,{units:'kilometers',properties:{label:lbl,stroke:COLOR.LABELS,baseHeight:0,_baseHeight:0,height:0}}));
   }
   return feats;
 }
 
-async function plotStaticChart(lat,lng,radius,doy){
-  const feats=[...compassFeatures(lat,lng,radius),...generateMesh(lat,lng,radius,doy)];
-  await rpc.invoke('updateGeoJSONLayerContents',
-    [CHART_LAYER,{type:'FeatureCollection',features:JSON.parse(JSON.stringify(feats))}]);
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-//  MALHA ANALÍTICA — 12 arcos mensais + analemas
-//  h+=0.04 (9min) → 600pts/arco; doy+=1 → máxima resolução analemas
-// ══════════════════════════════════════════════════════════════════════════
-function generateMesh(lat,lng,radius,currentDoy){
+// Carta analítica: 12 arcos mensais + 11 analemas
+function meshFeatures(lat,lng,radius,currentDoy){
   const ss=lat<0?[355,17,46,79,107,137,172,199,229,266,292,321]:[172,199,229,266,292,321,355,17,46,79,107,137];
   const feats=[];
-  // 12 arcos mensais com cor nativa via COLOR.MONTHS
   for(let m=0;m<12;m++){
     const isCur=Math.abs(currentDoy-ss[m])<15;
-    feats.push(...segLine(arcCoords3D(lat,lng,ss[m],radius,0.04),COLOR.MONTHS[m],isCur?2.5:1.5,isCur?0.9:0.65));
+    feats.push(...segLine(arcCoords3D(lat,lng,ss[m],radius,0.1),COLOR.MONTHS[m],isCur?2.5:1.5,isCur?0.9:0.65));
   }
-  // Analemas 8h–18h (passo diário=1 → máxima resolução)
   for(let hh=8;hh<=18;hh++){
     const pts=[];
-    for(let d=1;d<=365;d++){
+    for(let d=1;d<=365;d+=2){
       const s=calcSun(lat,lng,d,hh);if(!s.day||s.alt<=0)continue;
       const a=s.alt*D2R,z=s.az*D2R;
       const[ln,la]=local2geo(radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),lng,lat);
@@ -203,60 +155,67 @@ function generateMesh(lat,lng,radius,currentDoy){
   return feats;
 }
 
-// (plotWireframes legado removido — generateMesh agora alimenta plotStaticChart)
+// Trajetória do dia + mastro + sol (todas linhas 3D + point)
+function liveFeatures(lat,lng,doy,hr,radius){
+  const feats=[];
+  // Arco do dia — h+=0.25 (~60 segmentos, leve para atualização contínua)
+  feats.push(...segLine(arcCoords3D(lat,lng,doy,radius,0.25),COLOR.DAY_ARC,4,0.95));
 
-// ══════════════════════════════════════════════════════════════════════════
-//  LIVE PREVIEW — Sol + Arco do Dia via updateGeoJSONLayerContents
-//
-//  Usa a MESMA lógica nativa das camadas fixas (não addTempLayerGeoJSON)
-//  garantindo que Sol e Arco flutuem em 3D sem achatar a geometria.
-//
-//  Estrutura das features:
-//   • Arco do dia   → segLine (stroke/baseHeight)
-//   • Mastro        → ticks horizontais fatiados (stroke/baseHeight crescente)
-//   • Sol           → turf.point (fill + color + radius + baseHeight)
-// ══════════════════════════════════════════════════════════════════════════
-async function plotLivePreview(lat,lng,doy,hr,radius){
   const s=calcSun(lat,lng,doy,hr);
-  const liveFeats=[];
-
   if(s.day){
     const a=s.alt*D2R,z=s.az*D2R;
     const coordZ=Math.max(0,radius*Math.sin(a));
     const[sLng,sLat]=local2geo(radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),lng,lat);
     const col=s.alt>20?COLOR.SUN[1]:COLOR.SUN[0];
 
-    // 1. Arco do dia — microsseguimentos h+=0.04, stroke nativo
-    liveFeats.push(...segLine(arcCoords3D(lat,lng,doy,radius,0.04),COLOR.DAY_ARC,4,0.95));
-
-    // 2. Mastro — ticks horizontais fatiados com baseHeight crescente
-    const nPole=Math.max(4,Math.ceil(coordZ/8));
-    const tk=Math.max(0.3,radius*0.003); // offset horizontal ~0.3% do raio
+    // Mastro: 8 ticks horizontais em alturas crescentes
+    const nT=8,tk=Math.max(0.4,radius*0.004);
     const[pA,pB]=[local2geo(-tk,0,sLng,sLat),local2geo(tk,0,sLng,sLat)];
-    for(let i=0;i<=nPole;i++){
-      const midZ=(i/nPole)*coordZ;
-      liveFeats.push({type:'Feature',geometry:{type:'LineString',coordinates:[pA,pB]},
-        properties:{stroke:col,'stroke-width':1.5,'stroke-opacity':0.4,baseHeight:midZ,_baseHeight:midZ,height:0}});
+    for(let i=0;i<=nT;i++){
+      const zz=(i/nT)*coordZ;
+      feats.push({type:'Feature',geometry:{type:'LineString',coordinates:[pA,pB]},
+        properties:{stroke:col,'stroke-width':1.5,'stroke-opacity':0.4,baseHeight:zz,_baseHeight:zz,height:0}});
     }
 
-    // 3. Sol — Point nativo: Giraffe lê fill+color+radius+baseHeight → esfera 3D
-    liveFeats.push(turf.point([sLng,sLat],{
-      fill:col, color:col, radius:5,
-      baseHeight:coordZ, _baseHeight:coordZ, height:0,
-    }));
+    // SOL 3D: dois anéis de linha flutuando na altura exata (comprovado que linhas+baseHeight funcionam)
+    for(const rr of[radius*0.02,radius*0.012]){
+      const ring=[];
+      for(let i=0;i<=24;i++){
+        const t=(i/24)*2*Math.PI;
+        ring.push(local2geo(rr*Math.sin(t),rr*Math.cos(t),sLng,sLat));
+      }
+      feats.push({type:'Feature',geometry:{type:'LineString',coordinates:ring},
+        properties:{stroke:col,'stroke-width':5,'stroke-opacity':1,baseHeight:coordZ,_baseHeight:coordZ,height:0}});
+    }
+    // + Point nativo central (reforço; alguns renderers mostram esfera)
+    feats.push(turf.point([sLng,sLat],{fill:col,color:col,stroke:col,radius:5,baseHeight:coordZ,_baseHeight:coordZ,height:0}));
   }
+  return feats;
+}
 
-  // Serialização segura + envio ao layer permanente
-  await rpc.invoke('updateGeoJSONLayerContents',
-    [LIVE_LAYER,{type:'FeatureCollection',features:JSON.parse(JSON.stringify(liveFeats))}]);
+// ══════════════════════════════════════════════════════════════════════════
+//  GERENCIADOR DE RAW SECTIONS — cria/deleta em ciclo (único mecanismo 3D)
+// ══════════════════════════════════════════════════════════════════════════
+async function replaceSections(idsRef,feats){
+  // 1. Deleta as sections do ciclo anterior
+  if(idsRef.current?.length){
+    try{await rpc.invoke('deleteRawSections',[idsRef.current]);}catch(e){console.warn('[vG26] delete:',e?.message);}
+    idsRef.current=[];
+  }
+  if(!feats.length)return;
+  // 2. Cria as novas — createRawSections retorna array de IDs
+  try{
+    const clean=JSON.parse(JSON.stringify(feats));
+    const ids=await rpc.invoke('createRawSections',[clean]);
+    idsRef.current=Array.isArray(ids)?ids.filter(x=>typeof x==='string'):[];
+    console.log(`[vG26] ✓ ${idsRef.current.length} sections criadas`);
+  }catch(e){console.error('[vG26] create:',e?.message);idsRef.current=[];}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
 //  GERADOR GLB — RIBBON MESH + KHR_materials_unlit
-//  (para exportação externa: Rhino, Blender, SketchUp)
 // ══════════════════════════════════════════════════════════════════════════
 const h2r=hex=>[parseInt(hex.slice(1,3),16)/255,parseInt(hex.slice(3,5),16)/255,parseInt(hex.slice(5,7),16)/255];
-
 function buildRibbon(pts,halfW=0.12,vertical=true){
   if(pts.length<2)return null;
   const pos=[],idx=[];let mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];
@@ -273,7 +232,6 @@ function buildRibbon(pts,halfW=0.12,vertical=true){
   return{positions:new Float32Array(pos),indices:new Uint16Array(idx),min:mn,max:mx};
 }
 function mergeRibbons(rs){rs=rs.filter(Boolean);if(!rs.length)return null;let tP=0,tI=0;for(const r of rs){tP+=r.positions.length;tI+=r.indices.length;}const P=new Float32Array(tP),I=new Uint16Array(tI);let pO=0,iO=0,vO=0,mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];for(const r of rs){P.set(r.positions,pO);for(let i=0;i<r.indices.length;i++)I[iO+i]=r.indices[i]+vO;pO+=r.positions.length;iO+=r.indices.length;vO+=r.positions.length/3;for(let j=0;j<3;j++){mn[j]=Math.min(mn[j],r.min[j]);mx[j]=Math.max(mx[j],r.max[j]);}}return{positions:P,indices:I,min:mn,max:mx};}
-
 function glbGeometry(lat,lng,radius){
   const groups=[],hw=Math.max(0.12,radius*0.002);
   const ss=lat<0?[355,17,46,79,107,137,172,199,229,266,292,321]:[172,199,229,266,292,321,355,17,46,79,107,137];
@@ -306,7 +264,7 @@ function buildGLB(groups){
     acc.push({bufferView:bvI+1,componentType:5123,count:g.indices.length,type:'SCALAR'});
     meshes.push({primitives:[{attributes:{POSITION:acI},indices:acI+1,material:i}]});nodes.push({mesh:i});bvI+=2;acI+=2;
   }
-  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG23'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
+  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG26'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
   let jsonStr=JSON.stringify(gltf);while(jsonStr.length%4!==0)jsonStr+=' ';
   const jsonBytes=new TextEncoder().encode(jsonStr);
   const totalLen=12+8+jsonBytes.length+8+tb;
@@ -321,11 +279,10 @@ function downloadGLB(lat,lng,radius){
   const url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=`sun-path-${Math.abs(lat).toFixed(1)}${lat<0?'S':'N'}-r${radius}m.glb`;
   document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
-  console.log(`[vG25] GLB ${(blob.size/1024).toFixed(0)}KB — KHR_materials_unlit`);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  CARTA SOLAR SVG (referência visual inline)
+//  CARTA SOLAR SVG (referência inline)
 // ══════════════════════════════════════════════════════════════════════════
 const SR=80,SCX=100,SCY=100;
 const s2svg=(alt,az)=>{const r=SR*Math.cos(alt*D2R);return[SCX+r*Math.sin(az*D2R),SCY-r*Math.cos(az*D2R)];};
@@ -337,29 +294,25 @@ function SolarChart({lat,lng,doy,sun,seas}){
     h('svg',{viewBox:'0 0 200 200',className:'w-full',style:{height:'130px'}},
       h('rect',{width:200,height:200,fill:'#080c12'}),
       ...[{r:SR,s:'#1e3a5f',w:1.2},{r:SR*Math.cos(30*D2R),s:'#162032',w:.6},{r:SR*Math.cos(60*D2R),s:'#162032',w:.6}].map(({r,s,w},i)=>h('circle',{key:i,cx:SCX,cy:SCY,r:r.toFixed(1),stroke:s,strokeWidth:w,fill:'none'})),
-      h('text',{x:SCX+2,y:SCY-SR*Math.cos(30*D2R)+7,fill:'#1e3a5f',fontSize:6},'30°'),
-      h('text',{x:SCX+2,y:SCY-SR*Math.cos(60*D2R)+7,fill:'#1e3a5f',fontSize:6},'60°'),
       ...[...Array(12)].map((_,i)=>{const ar=i*30*D2R,c=i%3===0;return h('line',{key:i,x1:SCX,y1:SCY,x2:(SCX+SR*Math.sin(ar)).toFixed(1),y2:(SCY-SR*Math.cos(ar)).toFixed(1),stroke:c?'#1e3a5f':'#0f172a',strokeWidth:c?.6:.3});}),
       ...[{t:'N',x:SCX,y:9},{t:'S',x:SCX,y:196},{t:'L',x:194,y:SCY+4},{t:'O',x:6,y:SCY+4}].map(({t,x,y})=>h('text',{key:t,x,y,textAnchor:'middle',fill:'#334155',fontSize:7,fontWeight:'600'},t)),
-      paths.sum&&h('path',{d:paths.sum,stroke:COLOR.MONTHS[0],strokeWidth:1.8,fill:'none',opacity:.8}),
+      paths.sum&&h('path',{d:paths.sum,stroke:'#F59E0B',strokeWidth:1.8,fill:'none',opacity:.8}),
       paths.win&&h('path',{d:paths.win,stroke:'#38BDF8',strokeWidth:1.8,fill:'none',opacity:.75}),
       paths.eq&&h('path',{d:paths.eq,stroke:'#34D399',strokeWidth:1.8,fill:'none',opacity:.75}),
       paths.tod&&h('path',{d:paths.tod,stroke:'#fff',strokeWidth:2,fill:'none',opacity:.9}),
       dot&&h('g',null,
-        h('line',{x1:SCX,y1:SCY,x2:dot[0].toFixed(1),y2:dot[1].toFixed(1),stroke:COLOR.SUN[1],strokeWidth:.5,opacity:.3,strokeDasharray:'2,2'}),
-        h('circle',{cx:dot[0].toFixed(1),cy:dot[1].toFixed(1),r:8,fill:COLOR.SUN[1],opacity:.1}),
-        h('circle',{cx:dot[0].toFixed(1),cy:dot[1].toFixed(1),r:4,fill:COLOR.SUN[1],stroke:'#fff',strokeWidth:1.2})
-      ),
-      h('circle',{cx:SCX,cy:SCY,r:2,fill:'#1e293b'})
+        h('circle',{cx:dot[0].toFixed(1),cy:dot[1].toFixed(1),r:8,fill:'#F59E0B',opacity:.1}),
+        h('circle',{cx:dot[0].toFixed(1),cy:dot[1].toFixed(1),r:4,fill:'#F59E0B',stroke:'#fff',strokeWidth:1.2})
+      ),h('circle',{cx:SCX,cy:SCY,r:2,fill:'#1e293b'})
     ),
     h('div',{className:'flex items-center gap-3 px-2 py-1 border-t border-slate-800'},
-      ...[{c:COLOR.MONTHS[0],l:'Verão'},{c:'#38BDF8',l:'Inverno'},{c:'#34D399',l:'Equi.'},{c:'#fff',l:'Hoje'}].map(({c,l})=>h('span',{key:l,className:'flex items-center gap-1'},h('div',{style:{width:12,height:2,background:c,borderRadius:1}}),h('span',{className:'text-[8px] text-slate-500'},l)))
+      ...[{c:'#F59E0B',l:'Verão'},{c:'#38BDF8',l:'Inverno'},{c:'#34D399',l:'Equi.'},{c:'#fff',l:'Hoje'}].map(({c,l})=>h('span',{key:l,className:'flex items-center gap-1'},h('div',{style:{width:12,height:2,background:c,borderRadius:1}}),h('span',{className:'text-[8px] text-slate-500'},l)))
     )
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  APP PRINCIPAL
+//  APP PRINCIPAL — UI simplificada em 3 ações
 // ══════════════════════════════════════════════════════════════════════════
 const fmtH=h=>`${String(Math.floor(h)).padStart(2,'0')}:${String(Math.round((h%1)*60)).padStart(2,'0')}`;
 const fmtD=d=>new Date(2024,0,d).toLocaleDateString('pt-BR',{day:'numeric',month:'short'});
@@ -368,116 +321,66 @@ function SolarApp(){
   const[lat,setLat]=useState(INIT.lat);const[lng,setLng]=useState(INIT.lng);
   const[hr,setHr]=useState(INIT.hr);const[doy,setDoy]=useState(INIT.doy);
   const[rad,setRad]=useState(INIT.radius);const[scale,setScale]=useState(1.0);
-  const[show,setShow]=useState(false);const[sync,setSync]=useState('idle');
-  const[busy,setBusy]=useState(false);const[glbBusy,setGlbBusy]=useState(false);
+  const[sync,setSync]=useState('idle');
   const[picking,setPicking]=useState(false);
+  const[chartBusy,setChartBusy]=useState(false);
+  const[liveOn,setLiveOn]=useState(false);
+  const[glbBusy,setGlbBusy]=useState(false);
   const seas=useMemo(()=>seasons(lat),[lat]);
   const sunNow=useMemo(()=>calcSun(lat,lng,doy,hr),[lat,lng,doy,hr]);
   const effRad=Math.round(rad*scale);
-  const syncT=useRef(null),liveT=useRef(null),genT=useRef(null),gen=useRef(0);
+  const syncT=useRef(null),liveT=useRef(null);
+  const chartIds=useRef([]);   // sections da carta permanente
+  const liveIds=useRef([]);    // sections da trajetória live
 
-  // Centro inicial do mapa
+  // Centro inicial
   useEffect(()=>{(async()=>{try{const b=await rpc.invoke('getMapBounds',[]);const ring=b?.features?.[0]?.geometry?.coordinates?.[0];if(!ring)return;const lo=ring.map(c=>c[0]),la=ring.map(c=>c[1]);setLng(parseFloat(((Math.min(...lo)+Math.max(...lo))/2).toFixed(6)));setLat(parseFloat(((Math.min(...la)+Math.max(...la))/2).toFixed(6)));}catch{}})();},[]);
 
-  // Sync sol (debounce 150ms, sem layerTree)
+  // Sync sombras (sem layerTree → não pisca)
   useEffect(()=>{if(syncT.current)clearTimeout(syncT.current);syncT.current=setTimeout(async()=>{setSync('syncing');const r=await syncGiraffeSun(sunNow.az,sunNow.alt);setSync(r.ok?'ok':r.why);},150);return()=>clearTimeout(syncT.current);},[sunNow]);
 
-  // ── LIVE PREVIEW unificado (sol + arco do dia via updateGeoJSONLayerContents) ──
+  // ── LIVE: trajetória + sol — atualização automática via rawSections ──
   useEffect(()=>{
-    if(!show){
-      // Toggle OFF → limpa o layer enviando FeatureCollection vazia
-      rpc.invoke('updateGeoJSONLayerContents',[LIVE_LAYER,{type:'FeatureCollection',features:[]}]).catch(()=>{});
+    if(!liveOn){
+      if(liveIds.current.length)replaceSections(liveIds,[]);
       return;
     }
     if(liveT.current)clearTimeout(liveT.current);
-    liveT.current=setTimeout(()=>plotLivePreview(lat,lng,doy,hr,effRad).catch(()=>{}),80);
+    liveT.current=setTimeout(()=>{
+      replaceSections(liveIds,liveFeatures(lat,lng,doy,hr,effRad));
+    },400);
     return()=>clearTimeout(liveT.current);
-  },[lat,lng,doy,hr,effRad,show]);
+  },[lat,lng,doy,hr,effRad,liveOn]);
 
-  // Carta estática (compasso + 12 arcos + analemas) — LAYER PERMANENTE
-  // Persiste mesmo com o app fechado (updateGeoJSONLayerContents)
-  useEffect(()=>{
-    if(!show){
-      Object.values(L).forEach(rm); // limpa temp layers legados
-      rpc.invoke('updateGeoJSONLayerContents',[CHART_LAYER,{type:'FeatureCollection',features:[]}]).catch(()=>{});
-      return;
-    }
-    const id=++gen.current;if(genT.current)clearTimeout(genT.current);
-    genT.current=setTimeout(async()=>{
-      if(id!==gen.current)return;
-      await plotStaticChart(lat,lng,effRad,doy).catch(()=>{});
-    },300);return()=>{clearTimeout(genT.current);gen.current=id+1;};
-  },[lat,lng,effRad,doy,show]);
-
-  // Desmontar: NÃO limpa os layers permanentes — eles devem sobreviver fora do app
-  useEffect(()=>()=>{Object.values(L).forEach(rm);},[]);
-
-  // ── DEFINIR CENTRO ────────────────────────────────────────────────────
-  // 1º: elemento selecionado (estado ou RPCs) → centroide
-  // 2º: drawPoint — API oficial: Giraffe pede ao usuário para clicar no mapa
+  // ── AÇÃO 1: Centralizar (seleção → drawPoint) ──
   const handleCenter=async()=>{
-    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG25] ✓ Centro via ${src}:`,cLat.toFixed(5),cLng.toFixed(5));};
+    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG26] ✓ Centro via ${src}`);};
     const centOf=feats=>{try{const v=(feats||[]).filter(f=>{const g=f?.geometry||f;return g?.type&&g?.coordinates;}).map(f=>f.type==='Feature'?f:{type:'Feature',geometry:f.geometry||f,properties:{}});if(!v.length)return null;return turf.centroid({type:'FeatureCollection',features:v});}catch{return null;}};
     try{
-      // 1a. Estado selectedFeatures
       const sf=giraffeState.get('selectedFeatures');
       if(sf?.length){const c=centOf(sf);if(c){applyC(...c.geometry.coordinates,'selectedFeatures');return;}}
-      // 1b. RPC getSelectedFeature (singular — padrão dos exemplos oficiais)
       try{const f1=await rpc.invoke('getSelectedFeature',[]);if(f1){const c=centOf([f1]);if(c){applyC(...c.geometry.coordinates,'getSelectedFeature');return;}}}catch{}
-      // 1c. RPC getSelectedFeatures (plural)
       try{const f2=await rpc.invoke('getSelectedFeatures',[]);if(f2?.length){const c=centOf(f2);if(c){applyC(...c.geometry.coordinates,'getSelectedFeatures');return;}}}catch{}
-      // 2. Nada selecionado → drawPoint: Giraffe entra em modo de clique
+      // drawPoint: Giraffe pede clique no mapa
       setPicking(true);
       try{
         const pt=await rpc.invoke('drawPoint',[]);
-        const g=pt?.geometry||pt;
-        const coords=g?.coordinates||g;
+        const g=pt?.geometry||pt,coords=g?.coordinates||g;
         if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint');
-      }catch(e){console.warn('[vG25] drawPoint cancelado:',e?.message);}
+      }catch(e){console.warn('[vG26] drawPoint:',e?.message);}
       setPicking(false);
-    }catch(e){setPicking(false);console.warn('[vG25] center:',e?.message);}
+    }catch(e){setPicking(false);console.warn('[vG26]',e?.message);}
   };
 
-  // ── BAKE — layers permanentes com propriedades nativas ────────────────
-  const handleBake=async(mode)=>{
-    if(busy)return;setBusy(true);
+  // ── AÇÃO 2: Gerar carta solar permanente ──
+  const handleChart=async()=>{
+    if(chartBusy)return;setChartBusy(true);
     try{
-      // ── Gerar features com stroke/stroke-width/stroke-opacity nativos ──
-      const pathFeats=generateMesh(lat,lng,effRad,doy);
-      const ctr=[lng,lat],R=effRad,R1=effRad*0.95;
-      const compassFeats=[],lblFeats=[];
-      // Compasso Ladybug
-      const or=[];for(let a=0;a<=360;a+=2)or.push(turf.destination(turf.point(ctr),R/1000,a,{units:'kilometers'}).geometry.coordinates);
-      compassFeats.push(turf.lineString(or,{stroke:COLOR.COMPASS,'stroke-width':1.5,'stroke-opacity':0.7,baseHeight:0,_baseHeight:0,height:0}));
-      const ir=[];for(let a=0;a<=360;a+=2)ir.push(turf.destination(turf.point(ctr),R1/1000,a,{units:'kilometers'}).geometry.coordinates);
-      compassFeats.push(turf.lineString(ir,{stroke:COLOR.COMPASS,'stroke-width':1.0,'stroke-opacity':0.4,baseHeight:0,_baseHeight:0,height:0}));
-      for(let a=0;a<360;a+=10){
-        const iL=a%30===0,rT=iL?R*0.90:R*0.95;
-        const p1=turf.destination(turf.point(ctr),rT/1000,a,{units:'kilometers'}).geometry.coordinates;
-        const p2=turf.destination(turf.point(ctr),R/1000,a,{units:'kilometers'}).geometry.coordinates;
-        compassFeats.push(turf.lineString([p1,p2],{stroke:COLOR.COMPASS_TICK,'stroke-width':iL?1.2:0.7,'stroke-opacity':iL?0.6:0.3,baseHeight:0,_baseHeight:0,height:0}));
-      }
-      // Labels
-      for(let a=0;a<360;a+=30){let lbl=a+'°';if(a===0)lbl='N';else if(a===90)lbl='L';else if(a===180)lbl='S';else if(a===270)lbl='O';lblFeats.push(turf.destination(turf.point(ctr),(R+18)/1000,a,{units:'kilometers',properties:{label:lbl,stroke:COLOR.LABELS,'stroke-width':1,'stroke-opacity':0.8,baseHeight:0,_baseHeight:0,height:0}}));}
-
-      // Serialização segura
-      const all=JSON.parse(JSON.stringify([...compassFeats,...pathFeats,...lblFeats]));
-
-      if(mode==='layer'){
-        // ── Fixar Camada: layer GeoJSON permanente ──
-        const name='☀ Sun Path 3D';
-        try{await rpc.invoke('deleteProjectLayer',[name]);}catch{}
-        await new Promise(r=>setTimeout(r,400));
-        await rpc.invoke('updateGeoJSONLayerContents',[name,{type:'FeatureCollection',features:all}]);
-        alert(`✓ Layer permanente criado: "${name}"\nPropriedades stroke/baseHeight injetadas.`);
-      }else{
-        // ── Fixar Editável: raw sections editáveis ──
-        // createRawSections lê stroke/stroke-width/stroke-opacity + baseHeight nativamente
-        await rpc.invoke('createRawSections',[all]);
-        alert('✓ Seções editáveis criadas com cor e baseHeight.\nEdite individualmente no mapa.');
-      }
+      const feats=[...compassFeatures(lat,lng,effRad),...meshFeatures(lat,lng,effRad,doy)];
+      await replaceSections(chartIds,feats);
+      alert(`✓ Carta solar criada (${chartIds.current.length} elementos 3D editáveis)`);
     }catch(e){console.error(e);alert('Erro: '+e?.message);}
-    setBusy(false);
+    setChartBusy(false);
   };
 
   const syncLabel={ok:'✓ Sombras OK',syncing:'⟳',night:'☾ Noite',no_views:'⚠ View',error:'⚠ Erro',idle:''}[sync]||'';
@@ -487,14 +390,14 @@ function SolarApp(){
   return h('div',{className:'h-screen flex flex-col p-2 gap-2 bg-[#0f1117]'},
     h('div',{className:'flex items-center justify-between border-b border-slate-800 pb-2 shrink-0'},
       h('div',null,
-        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG25]'),
+        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG26]'),
         h('p',{className:'text-[10px] text-slate-600'},`${lat.toFixed(4)}° · ${lng.toFixed(4)}°${scale!==1?` · ×${scale.toFixed(1)}=${effRad}m`:''}`)
       ),
       syncLabel&&h('span',{className:`text-[9px] px-1.5 py-0.5 bg-slate-900 rounded ${syncCls}`},syncLabel)
     ),
     h('div',{className:'flex-1 min-h-0 overflow-y-auto ks flex flex-col gap-2'},
       h(SolarChart,{lat,lng,doy,sun:sunNow,seas}),
-      // Presets sazonais
+      // Presets
       h('div',{className:'grid grid-cols-3 gap-1.5'},
         ...[{e:'☀',l:'Verão',ac:doy===seas.sum,bc:'amber',fn:()=>setDoy(seas.sum),sub:seas.sumLbl},
             {e:'❄',l:'Inverno',ac:doy===seas.win,bc:'sky',fn:()=>setDoy(seas.win),sub:seas.winLbl},
@@ -509,34 +412,38 @@ function SolarApp(){
       h('div',{className:'bg-[#111827] rounded-lg border border-slate-800 p-2 flex flex-col gap-3'},
         ...[{l:'Horário',v:fmtH(hr),min:0,max:23.99,step:.25,val:hr,fn:v=>setHr(+v)},
             {l:'Data',v:fmtD(doy),min:1,max:365,step:1,val:doy,fn:v=>setDoy(+v)},
-            {l:'Raio GLB',v:rad+'m',min:50,max:500,step:10,val:rad,fn:v=>setRad(+v)}
+            {l:'Raio',v:rad+'m',min:50,max:500,step:10,val:rad,fn:v=>setRad(+v)}
         ].map(({l,v,min,max,step,val,fn})=>h('div',{key:l},
           h('div',{className:'flex justify-between text-[11px] mb-1.5'},h('span',{className:'text-slate-400'},l),h('span',{className:'text-amber-400'},v)),
           h('input',{type:'range',className:'sl',min,max,step,value:val,onChange:e=>fn(e.target.value)})
         )),
         h('div',null,
           h('div',{className:'flex justify-between text-[11px] mb-1.5'},h('span',{className:'text-slate-400'},'Escala GLB'),h('span',{className:'text-amber-400'},`×${scale.toFixed(1)} → ${effRad}m`)),
-          h('input',{type:'range',className:'sl',min:.1,max:5,step:.1,value:scale,onChange:e=>setScale(parseFloat(e.target.value))}),
-          h('p',{className:'text-[9px] text-slate-600 mt-1'},'Ajuste se escalou o GLB no Giraffe')
+          h('input',{type:'range',className:'sl',min:.1,max:5,step:.1,value:scale,onChange:e=>setScale(parseFloat(e.target.value))})
         )
       ),
-      // Centralizar + Toggle
-      h('div',{className:'bg-[#111827] rounded-lg border border-slate-800 p-2 flex flex-col gap-2'},
-        h('button',{onClick:handleCenter,disabled:picking,className:`w-full py-1.5 rounded border text-[11px] font-semibold uppercase tracking-wider transition-all ${picking?'border-red-500/60 bg-red-500/10 text-red-400 animate-pulse':'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-amber-500/40 hover:text-amber-400'}`},
-          picking?'⌖ Clique no mapa...':'⌖ Centralizar (Seleção ou Clique)'),
-        h('p',{className:'text-[9px] text-slate-600 -mt-1 text-center'},'Selecione um elemento e clique — ou clique direto no mapa'),
-        h('div',{className:'flex items-center justify-between pt-1.5 border-t border-slate-800/50'},
-          h('div',null,h('span',{className:'text-sm font-medium text-slate-300'},'Carta no Mapa 3D'),h('p',{className:'text-[10px] text-slate-600'},show?'Ativo':'Inativo')),
-          h('button',{className:`tg ${show?'on':''}`,onClick:()=>setShow(v=>!v)})
-        )
-      ),
-      // Bake + GLB
+      // ═══ 3 AÇÕES PRINCIPAIS ═══
       h('div',{className:'flex flex-col gap-1.5'},
-        h('button',{onClick:()=>handleBake('layer'),disabled:busy,className:`w-full py-1.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-500 text-[10px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-colors ${busy?'opacity-50':''}`},'⇩ Fixar Camada Permanente'),
-        h('div',{className:'flex gap-1.5'},
-          h('button',{onClick:()=>handleBake('raw'),disabled:busy,className:`flex-1 py-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-500/20 transition-colors ${busy?'opacity-50':''}`},'✏️ Seções Editáveis'),
-          h('button',{onClick:()=>{if(glbBusy)return;setGlbBusy(true);setTimeout(()=>{downloadGLB(lat,lng,rad);setGlbBusy(false);},100);},disabled:glbBusy,className:`flex-1 py-1.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-400 text-[10px] font-bold uppercase tracking-wider hover:bg-sky-500/20 transition-colors ${glbBusy?'opacity-50':''}`},glbBusy?'⟳ GLB':'⇩ GLB')
-        )
+        // AÇÃO 1: Centralizar
+        h('button',{onClick:handleCenter,disabled:picking,
+          className:`w-full py-2 rounded border text-[11px] font-bold uppercase tracking-wider transition-all ${picking?'border-red-500/60 bg-red-500/10 text-red-400 animate-pulse':'border-slate-600 bg-slate-800/40 text-slate-300 hover:border-slate-500'}`},
+          picking?'⌖ Clique no mapa...':'① ⌖ Centralizar (seleção ou clique)'),
+        // AÇÃO 2: Carta permanente
+        h('button',{onClick:handleChart,disabled:chartBusy,
+          className:`w-full py-2 rounded border border-amber-500/30 bg-amber-500/10 text-amber-500 text-[11px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-colors ${chartBusy?'opacity-50 cursor-wait':''}`},
+          chartBusy?'⟳ Gerando carta...':'② ☀ Gerar Carta Solar 3D'),
+        // AÇÃO 3: Live trajetória + sol (toggle)
+        h('div',{className:'flex items-center justify-between p-2 bg-[#111827] rounded-lg border border-emerald-500/20'},
+          h('div',null,
+            h('span',{className:'text-[11px] font-bold uppercase tracking-wider text-emerald-500'},'③ ➤ Trajetória + Sol do Dia'),
+            h('p',{className:'text-[9px] text-slate-600'},liveOn?'Atualizando automaticamente':'Desligado')
+          ),
+          h('button',{className:`tg ${liveOn?'on':''}`,onClick:()=>setLiveOn(v=>!v)})
+        ),
+        // GLB
+        h('button',{onClick:()=>{if(glbBusy)return;setGlbBusy(true);setTimeout(()=>{downloadGLB(lat,lng,rad);setGlbBusy(false);},100);},disabled:glbBusy,
+          className:`w-full py-1.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-400 text-[10px] font-bold uppercase tracking-wider hover:bg-sky-500/20 transition-colors ${glbBusy?'opacity-50':''}`},
+          glbBusy?'⟳ GLB...':'⇩ Baixar GLB (Rhino/Blender)')
       )
     )
   );
