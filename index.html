@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Sun Path 3D · KV [vG24]</title>
+  <title>Sun Path 3D · KV [vG25]</title>
   <link href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -39,8 +39,9 @@ const COLOR={
   LABELS:'#94a3b8',
   SUN:['#D97706','#F59E0B'],
 };
-const L={PATHS:'sp-paths',COMPASS:'sp-compass',LABELS:'sp-labels'};
-const LIVE_LAYER='☀ SP - Hoje (Live)'; // layer permanente para sol + arco do dia
+const L={PATHS:'sp-paths',COMPASS:'sp-compass',LABELS:'sp-labels'}; // legado: limpeza de temp layers antigos
+const CHART_LAYER='☀ SP - Carta Solar';   // permanente: compasso + 12 arcos + analemas + labels
+const LIVE_LAYER='☀ SP - Hoje (Live)';    // permanente: sol + arco do dia + mastro
 const _n=new Date(),_doy=Math.floor((_n-new Date(_n.getFullYear(),0,0))/864e5);
 const INIT={lat:-23.5558,lng:-46.6396,hr:Math.round((_n.getHours()+_n.getMinutes()/60)*4)/4,doy:Math.max(1,Math.min(365,_doy)),radius:100};
 const seasons=lat=>({sum:lat<0?355:172,win:lat<0?172:355,eqMar:79,eqSep:266,sumLbl:lat<0?'Dez':'Jun',winLbl:lat<0?'Jun':'Dez'});
@@ -146,31 +147,34 @@ async function syncGiraffeSun(az,alt){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  COMPASSO LADYBUG — 2 anéis externos + ticks (propriedades nativas)
+//  CARTA ESTÁTICA — compasso + 12 arcos + analemas + labels
+//  Escrita em LAYER PERMANENTE (updateGeoJSONLayerContents):
+//   • renderiza 3D corretamente via stroke/baseHeight (comprovado)
+//   • persiste mesmo com o app fechado
 // ══════════════════════════════════════════════════════════════════════════
-async function plotCompass(lat,lng,radius){
-  await rm(L.COMPASS);await rm(L.LABELS);
-  const ctr=[lng,lat],R=radius,R1=radius*0.95,feats=[],lbls=[];
-  // Anel externo
+function compassFeatures(lat,lng,radius){
+  const ctr=[lng,lat],R=radius,R1=radius*0.95,feats=[];
   const or=[];for(let a=0;a<=360;a+=2)or.push(turf.destination(turf.point(ctr),R/1000,a,{units:'kilometers'}).geometry.coordinates);
   feats.push(turf.lineString(or,{stroke:COLOR.COMPASS,'stroke-width':1.5,'stroke-opacity':0.7,baseHeight:0,_baseHeight:0,height:0}));
-  // Anel interno
   const ir=[];for(let a=0;a<=360;a+=2)ir.push(turf.destination(turf.point(ctr),R1/1000,a,{units:'kilometers'}).geometry.coordinates);
   feats.push(turf.lineString(ir,{stroke:COLOR.COMPASS,'stroke-width':1.0,'stroke-opacity':0.4,baseHeight:0,_baseHeight:0,height:0}));
-  // Ticks entre os dois anéis
   for(let a=0;a<360;a+=10){
     const iL=a%30===0,rT=iL?R*0.90:R*0.95;
     const p1=turf.destination(turf.point(ctr),rT/1000,a,{units:'kilometers'}).geometry.coordinates;
     const p2=turf.destination(turf.point(ctr),R/1000,a,{units:'kilometers'}).geometry.coordinates;
     feats.push(turf.lineString([p1,p2],{stroke:COLOR.COMPASS_TICK,'stroke-width':iL?1.2:0.7,'stroke-opacity':iL?0.6:0.3,baseHeight:0,_baseHeight:0,height:0}));
   }
-  // Labels cardinais (N/S/L/O) + cada 30°
   for(let a=0;a<360;a+=30){
     let lbl=a+'°';if(a===0)lbl='N';else if(a===90)lbl='L';else if(a===180)lbl='S';else if(a===270)lbl='O';
-    lbls.push(turf.destination(turf.point(ctr),(R+15)/1000,a,{units:'kilometers',properties:{label:lbl}}));
+    feats.push(turf.destination(turf.point(ctr),(R+15)/1000,a,{units:'kilometers',properties:{label:lbl,stroke:COLOR.LABELS,fill:COLOR.LABELS,color:COLOR.LABELS,radius:1,baseHeight:0,_baseHeight:0,height:0}}));
   }
-  await rpc.invoke('addTempLayerGeoJSON',[L.COMPASS,fc(feats),LINE_PAINT]);
-  await rpc.invoke('addTempLayerGeoJSON',[L.LABELS,fc(lbls),{type:'symbol',layout:{'text-field':['get','label'],'text-size':12,'text-pitch-alignment':'map','text-rotation-alignment':'map'},paint:{'text-color':COLOR.LABELS,'text-halo-color':'#000','text-halo-width':1.5}}]);
+  return feats;
+}
+
+async function plotStaticChart(lat,lng,radius,doy){
+  const feats=[...compassFeatures(lat,lng,radius),...generateMesh(lat,lng,radius,doy)];
+  await rpc.invoke('updateGeoJSONLayerContents',
+    [CHART_LAYER,{type:'FeatureCollection',features:JSON.parse(JSON.stringify(feats))}]);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -199,12 +203,7 @@ function generateMesh(lat,lng,radius,currentDoy){
   return feats;
 }
 
-async function plotWireframes(lat,lng,radius,doy){
-  await rm(L.PATHS);
-  const feats=generateMesh(lat,lng,radius,doy);
-  if(!feats.length)return;
-  await rpc.invoke('addTempLayerGeoJSON',[L.PATHS,fc(feats),LINE_PAINT]);
-}
+// (plotWireframes legado removido — generateMesh agora alimenta plotStaticChart)
 
 // ══════════════════════════════════════════════════════════════════════════
 //  LIVE PREVIEW — Sol + Arco do Dia via updateGeoJSONLayerContents
@@ -322,7 +321,7 @@ function downloadGLB(lat,lng,radius){
   const url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=`sun-path-${Math.abs(lat).toFixed(1)}${lat<0?'S':'N'}-r${radius}m.glb`;
   document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
-  console.log(`[vG24] GLB ${(blob.size/1024).toFixed(0)}KB — KHR_materials_unlit`);
+  console.log(`[vG25] GLB ${(blob.size/1024).toFixed(0)}KB — KHR_materials_unlit`);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -371,6 +370,7 @@ function SolarApp(){
   const[rad,setRad]=useState(INIT.radius);const[scale,setScale]=useState(1.0);
   const[show,setShow]=useState(false);const[sync,setSync]=useState('idle');
   const[busy,setBusy]=useState(false);const[glbBusy,setGlbBusy]=useState(false);
+  const[picking,setPicking]=useState(false);
   const seas=useMemo(()=>seasons(lat),[lat]);
   const sunNow=useMemo(()=>calcSun(lat,lng,doy,hr),[lat,lng,doy,hr]);
   const effRad=Math.round(rad*scale);
@@ -394,42 +394,48 @@ function SolarApp(){
     return()=>clearTimeout(liveT.current);
   },[lat,lng,doy,hr,effRad,show]);
 
-  // Carta estática (compasso + wireframes) — temp layers normais
+  // Carta estática (compasso + 12 arcos + analemas) — LAYER PERMANENTE
+  // Persiste mesmo com o app fechado (updateGeoJSONLayerContents)
   useEffect(()=>{
-    if(!show){Object.values(L).forEach(rm);return;}
+    if(!show){
+      Object.values(L).forEach(rm); // limpa temp layers legados
+      rpc.invoke('updateGeoJSONLayerContents',[CHART_LAYER,{type:'FeatureCollection',features:[]}]).catch(()=>{});
+      return;
+    }
     const id=++gen.current;if(genT.current)clearTimeout(genT.current);
     genT.current=setTimeout(async()=>{
       if(id!==gen.current)return;
-      await plotCompass(lat,lng,effRad);
-      await plotWireframes(lat,lng,effRad,doy);
+      await plotStaticChart(lat,lng,effRad,doy).catch(()=>{});
     },300);return()=>{clearTimeout(genT.current);gen.current=id+1;};
   },[lat,lng,effRad,doy,show]);
 
-  // Limpeza ao desmontar
-  useEffect(()=>()=>{
-    Object.values(L).forEach(rm);
-    rpc.invoke('updateGeoJSONLayerContents',[LIVE_LAYER,{type:'FeatureCollection',features:[]}]).catch(()=>{});
-  },[]);
+  // Desmontar: NÃO limpa os layers permanentes — eles devem sobreviver fora do app
+  useEffect(()=>()=>{Object.values(L).forEach(rm);},[]);
 
-  // ── CENTRALIZAR NA SELEÇÃO ────────────────────────────────────────────
+  // ── DEFINIR CENTRO ────────────────────────────────────────────────────
+  // 1º: elemento selecionado (estado ou RPCs) → centroide
+  // 2º: drawPoint — API oficial: Giraffe pede ao usuário para clicar no mapa
   const handleCenter=async()=>{
-    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG24] ✓ Centro via ${src}:`,cLat.toFixed(5),cLng.toFixed(5));};
-    const centOf=feats=>{try{const v=feats.filter(f=>{const g=f?.geometry||f;return g?.type&&g?.coordinates;}).map(f=>f.type==='Feature'?f:{type:'Feature',geometry:f.geometry||f,properties:{}});if(!v.length)return null;return turf.centroid({type:'FeatureCollection',features:v});}catch{return null;}};
+    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG25] ✓ Centro via ${src}:`,cLat.toFixed(5),cLng.toFixed(5));};
+    const centOf=feats=>{try{const v=(feats||[]).filter(f=>{const g=f?.geometry||f;return g?.type&&g?.coordinates;}).map(f=>f.type==='Feature'?f:{type:'Feature',geometry:f.geometry||f,properties:{}});if(!v.length)return null;return turf.centroid({type:'FeatureCollection',features:v});}catch{return null;}};
     try{
-      // 1. selectedFeatures
+      // 1a. Estado selectedFeatures
       const sf=giraffeState.get('selectedFeatures');
       if(sf?.length){const c=centOf(sf);if(c){applyC(...c.geometry.coordinates,'selectedFeatures');return;}}
-      // 2. getSelectedFeatures RPC
-      try{const sf2=await rpc.invoke('getSelectedFeatures',[]);if(sf2?.length){const c=centOf(sf2);if(c){applyC(...c.geometry.coordinates,'getSelectedFeatures');return;}}}catch{}
-      // 3. selected IDs → getFeatures
-      const ids=giraffeState.get('selected');
-      if(ids?.length){try{const feats=await rpc.invoke('getFeatures',[Array.from(ids).filter(Boolean).map(String).slice(0,50)]);if(feats?.length){const c=centOf(feats);if(c){applyC(...c.geometry.coordinates,'getFeatures');return;}}}catch{}}
-      // 4. getQueriedFeature (último clique/hover, inclui buildings)
-      try{const qf=await rpc.invoke('getQueriedFeature',[]);if(qf){const c=centOf([qf]);if(c){applyC(...c.geometry.coordinates,'getQueriedFeature');return;}}}catch{}
-      // 5. centro do mapa visível
-      const b=await rpc.invoke('getMapBounds',[]);const ring=b?.features?.[0]?.geometry?.coordinates?.[0];
-      if(ring){const lo=ring.map(c=>c[0]),la=ring.map(c=>c[1]);applyC((Math.min(...lo)+Math.max(...lo))/2,(Math.min(...la)+Math.max(...la))/2,'mapBounds');}
-    }catch(e){console.warn('[vG24] center:',e?.message);}
+      // 1b. RPC getSelectedFeature (singular — padrão dos exemplos oficiais)
+      try{const f1=await rpc.invoke('getSelectedFeature',[]);if(f1){const c=centOf([f1]);if(c){applyC(...c.geometry.coordinates,'getSelectedFeature');return;}}}catch{}
+      // 1c. RPC getSelectedFeatures (plural)
+      try{const f2=await rpc.invoke('getSelectedFeatures',[]);if(f2?.length){const c=centOf(f2);if(c){applyC(...c.geometry.coordinates,'getSelectedFeatures');return;}}}catch{}
+      // 2. Nada selecionado → drawPoint: Giraffe entra em modo de clique
+      setPicking(true);
+      try{
+        const pt=await rpc.invoke('drawPoint',[]);
+        const g=pt?.geometry||pt;
+        const coords=g?.coordinates||g;
+        if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint');
+      }catch(e){console.warn('[vG25] drawPoint cancelado:',e?.message);}
+      setPicking(false);
+    }catch(e){setPicking(false);console.warn('[vG25] center:',e?.message);}
   };
 
   // ── BAKE — layers permanentes com propriedades nativas ────────────────
@@ -481,7 +487,7 @@ function SolarApp(){
   return h('div',{className:'h-screen flex flex-col p-2 gap-2 bg-[#0f1117]'},
     h('div',{className:'flex items-center justify-between border-b border-slate-800 pb-2 shrink-0'},
       h('div',null,
-        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG24]'),
+        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG25]'),
         h('p',{className:'text-[10px] text-slate-600'},`${lat.toFixed(4)}° · ${lng.toFixed(4)}°${scale!==1?` · ×${scale.toFixed(1)}=${effRad}m`:''}`)
       ),
       syncLabel&&h('span',{className:`text-[9px] px-1.5 py-0.5 bg-slate-900 rounded ${syncCls}`},syncLabel)
@@ -516,9 +522,9 @@ function SolarApp(){
       ),
       // Centralizar + Toggle
       h('div',{className:'bg-[#111827] rounded-lg border border-slate-800 p-2 flex flex-col gap-2'},
-        h('button',{onClick:handleCenter,className:'w-full py-1.5 rounded border border-slate-700 bg-slate-800/40 text-slate-300 hover:border-amber-500/40 hover:text-amber-400 text-[11px] font-semibold uppercase tracking-wider transition-all'},
-          '⌖ Centralizar na Seleção'),
-        h('p',{className:'text-[9px] text-slate-600 -mt-1 text-center'},'Selecione ou clique em qualquer elemento, depois clique'),
+        h('button',{onClick:handleCenter,disabled:picking,className:`w-full py-1.5 rounded border text-[11px] font-semibold uppercase tracking-wider transition-all ${picking?'border-red-500/60 bg-red-500/10 text-red-400 animate-pulse':'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-amber-500/40 hover:text-amber-400'}`},
+          picking?'⌖ Clique no mapa...':'⌖ Centralizar (Seleção ou Clique)'),
+        h('p',{className:'text-[9px] text-slate-600 -mt-1 text-center'},'Selecione um elemento e clique — ou clique direto no mapa'),
         h('div',{className:'flex items-center justify-between pt-1.5 border-t border-slate-800/50'},
           h('div',null,h('span',{className:'text-sm font-medium text-slate-300'},'Carta no Mapa 3D'),h('p',{className:'text-[10px] text-slate-600'},show?'Ativo':'Inativo')),
           h('button',{className:`tg ${show?'on':''}`,onClick:()=>setShow(v=>!v)})
