@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Sun Path 3D · KV [vG31]</title>
+  <title>Sun Path 3D · KV [vG32]</title>
   <link href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -185,8 +185,8 @@ function meshFeatures(lat,lng,radius,currentDoy){
 function liveFeatures(lat,lng,doy,hr,radius){
   const w=Math.max(0.2,radius*0.003), t=Math.max(0.3,radius*0.005);
   const feats=[];
-  // Arco do dia — slab amarelo com 99% de opacidade (sem sombra)
-  feats.push(...segSlab(arcCoords3D(lat,lng,doy,radius,0.3),COLOR.DAY_ARC,w,t,0.99));
+  // Arco do dia — slab amarelo, alta resolução (h+=0.15 → ~160 segmentos), 99% opacidade
+  feats.push(...segSlab(arcCoords3D(lat,lng,doy,radius,0.15),COLOR.DAY_ARC,w,t,0.99));
 
   const s=calcSun(lat,lng,doy,hr);
   if(s.day){
@@ -237,9 +237,9 @@ async function deleteByTag(tag){
       .filter(Boolean);
     if(ids.length){
       await rpc.invoke('deleteRawSections',[ids]);
-      console.log(`[vG31] ✗ ${ids.length} sections '${tag}' deletadas`);
+      console.log(`[vG32] ✗ ${ids.length} sections '${tag}' deletadas`);
     }
-  }catch(e){console.warn('[vG31] deleteByTag:',e?.message);}
+  }catch(e){console.warn('[vG32] deleteByTag:',e?.message);}
 }
 
 async function replaceSections(tag,layerName,feats){
@@ -252,13 +252,13 @@ async function replaceSections(tag,layerName,feats){
   try{
     // Tenta criar no layer nomeado (separa carta e trajetória em layers distintos)
     await rpc.invoke('createRawSections',[prep(layerName)]);
-    console.log(`[vG31] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
+    console.log(`[vG32] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
   }catch(e1){
     try{
       // Fallback: layer 'default' (sempre aceito)
       await rpc.invoke('createRawSections',[prep('default')]);
-      console.log(`[vG31] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
-    }catch(e2){console.error('[vG31] create:',e2?.message);}
+      console.log(`[vG32] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
+    }catch(e2){console.error('[vG32] create:',e2?.message);}
   }
 }
 
@@ -300,16 +300,25 @@ const GLYPH={
   '9':[[[1,.5],[0,.5]],[[0,.5],[0,1]],[[0,1],[1,1]],[[1,1],[1,0]]],
   '°':[[[.15,.75],[.55,.75]],[[.55,.75],[.55,1.1]],[[.55,1.1],[.15,1.1]],[[.15,1.1],[.15,.75]]],
 };
-// Gera ribbons planos no chão para uma string centrada em (cx,cy) local
+// Fita em CRUZ: ribbon vertical + horizontal → visível de QUALQUER ângulo
+// (fita só-vertical desaparece vista de topo; só-horizontal desaparece de lado)
+function crossRibbons(pts,halfW){
+  const out=[];
+  const v=buildRibbon(pts,halfW,true);if(v)out.push(v);
+  const hh=buildRibbon(pts,halfW,false);if(hh)out.push(hh);
+  return out;
+}
+
+// Gera ribbons EM CRUZ, elevados (+0.2m), para uma string centrada em (cx,cy) local
 function textRibbons(txt,cx,cy,hgt,halfW){
-  const ribs=[],cw=hgt*0.62,adv=hgt*0.82;
+  const ribs=[],cw=hgt*0.62,adv=hgt*0.82,zT=0.2;  // +0.2m: evita z-fighting com o chão
   const w=txt.length*adv-((adv-cw));
   let x0=cx-w/2;
   for(const ch of txt){
     const g=GLYPH[ch];
     if(g)for(const[[ax,ay],[bx,by]]of g){
-      const rb=buildRibbon([[x0+ax*cw,cy-hgt/2+ay*hgt,0],[x0+bx*cw,cy-hgt/2+by*hgt,0]],halfW,false);
-      if(rb)ribs.push(rb);
+      const seg=[[x0+ax*cw,cy-hgt/2+ay*hgt,zT],[x0+bx*cw,cy-hgt/2+by*hgt,zT]];
+      ribs.push(...crossRibbons(seg,halfW));
     }
     x0+=adv;
   }
@@ -321,12 +330,12 @@ function glbGeometry(lat,lng,radius){
   const ss=lat<0?[355,17,46,79,107,137,172,199,229,266,292,321]:[172,199,229,266,292,321,355,17,46,79,107,137];
   for(let m=0;m<12;m++){
     const pts=[];for(let hh=0;hh<=24;hh+=0.15){const s=calcSun(lat,lng,ss[m],hh);if(!s.day&&s.alt<-1)continue;const a=s.alt*D2R,z=s.az*D2R;pts.push([radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),Math.max(0,radius*Math.sin(a))]);}
-    if(pts.length>1){const rb=buildRibbon(pts,hw,true);if(rb){rb.color=h2r(COLOR.MONTHS[m]);groups.push(rb);}}
+    if(pts.length>1){const m2=mergeRibbons(crossRibbons(pts,hw));if(m2){m2.color=h2r(COLOR.MONTHS[m]);groups.push(m2);}}
   }
   const aRibs=[];
-  for(let hh=8;hh<=18;hh++){const pts=[];for(let d=1;d<=365;d+=2){const s=calcSun(lat,lng,d,hh);if(!s.day||s.alt<=0)continue;const a=s.alt*D2R,z=s.az*D2R;pts.push([radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),Math.max(0,radius*Math.sin(a))]);}if(pts.length>2){pts.push(pts[0]);const rb=buildRibbon(pts,hw*0.7,true);if(rb)aRibs.push(rb);}}
+  for(let hh=8;hh<=18;hh++){const pts=[];for(let d=1;d<=365;d+=2){const s=calcSun(lat,lng,d,hh);if(!s.day||s.alt<=0)continue;const a=s.alt*D2R,z=s.az*D2R;pts.push([radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),Math.max(0,radius*Math.sin(a))]);}if(pts.length>2){pts.push(pts[0]);aRibs.push(...crossRibbons(pts,hw*0.7));}}
   if(aRibs.length){const m=mergeRibbons(aRibs);if(m){m.color=h2r(COLOR.ANALEMMAS);groups.push(m);}}
-  const dRibs=[];for(const alt of[10,20,30,40,50,60,70,80]){const rr=radius*Math.cos(alt*D2R),zz=radius*Math.sin(alt*D2R);if(rr<1)continue;const pts=[];for(let i=0;i<=90;i++){const t=(i/90)*2*Math.PI;pts.push([rr*Math.sin(t),rr*Math.cos(t),zz]);}const rb=buildRibbon(pts,hw*0.6,true);if(rb)dRibs.push(rb);}
+  const dRibs=[];for(const alt of[10,20,30,40,50,60,70,80]){const rr=radius*Math.cos(alt*D2R),zz=radius*Math.sin(alt*D2R);if(rr<1)continue;const pts=[];for(let i=0;i<=90;i++){const t=(i/90)*2*Math.PI;pts.push([rr*Math.sin(t),rr*Math.cos(t),zz]);}dRibs.push(...crossRibbons(pts,hw*0.6));}
   if(dRibs.length){const m=mergeRibbons(dRibs);if(m){m.color=[0.35,0.35,0.35];groups.push(m);}}
   const cRibs=[];
   for(const r of[radius,radius*0.95]){const pts=[];for(let i=0;i<=90;i++){const t=(i/90)*2*Math.PI;pts.push([r*Math.sin(t),r*Math.cos(t),0]);}const rb=buildRibbon(pts,hw,false);if(rb)cRibs.push(rb);}
@@ -360,7 +369,7 @@ function buildGLB(groups){
     acc.push({bufferView:bvI+1,componentType:5123,count:g.indices.length,type:'SCALAR'});
     meshes.push({primitives:[{attributes:{POSITION:acI},indices:acI+1,material:i}]});nodes.push({mesh:i});bvI+=2;acI+=2;
   }
-  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG31'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
+  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG32'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
   let jsonStr=JSON.stringify(gltf);while(jsonStr.length%4!==0)jsonStr+=' ';
   const jsonBytes=new TextEncoder().encode(jsonStr);
   const totalLen=12+8+jsonBytes.length+8+tb;
@@ -448,7 +457,7 @@ function SolarApp(){
 
   // ── AÇÃO 1: Centralizar (seleção → drawPoint) ──
   const handleCenter=async()=>{
-    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG31] ✓ Centro via ${src}`);};
+    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG32] ✓ Centro via ${src}`);};
     const centOf=feats=>{try{const v=(feats||[]).filter(f=>{const g=f?.geometry||f;return g?.type&&g?.coordinates;}).map(f=>f.type==='Feature'?f:{type:'Feature',geometry:f.geometry||f,properties:{}});if(!v.length)return null;return turf.centroid({type:'FeatureCollection',features:v});}catch{return null;}};
     try{
       const sf=giraffeState.get('selectedFeatures');
@@ -461,9 +470,9 @@ function SolarApp(){
         const pt=await rpc.invoke('drawPoint',[]);
         const g=pt?.geometry||pt,coords=g?.coordinates||g;
         if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint');
-      }catch(e){console.warn('[vG31] drawPoint:',e?.message);}
+      }catch(e){console.warn('[vG32] drawPoint:',e?.message);}
       setPicking(false);
-    }catch(e){setPicking(false);console.warn('[vG31]',e?.message);}
+    }catch(e){setPicking(false);console.warn('[vG32]',e?.message);}
   };
 
   // ── AÇÃO 2: Baixar carta solar GLB (inserção manual no Giraffe) ──
@@ -484,7 +493,7 @@ function SolarApp(){
   return h('div',{className:'h-screen flex flex-col p-2 gap-2 bg-[#0f1117]'},
     h('div',{className:'flex items-center justify-between border-b border-slate-800 pb-2 shrink-0'},
       h('div',null,
-        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG31]'),
+        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG32]'),
         h('p',{className:'text-[10px] text-slate-600'},`${lat.toFixed(4)}° · ${lng.toFixed(4)}°${scale!==1?` · ×${scale.toFixed(1)}=${effRad}m`:''}`)
       ),
       syncLabel&&h('span',{className:`text-[9px] px-1.5 py-0.5 bg-slate-900 rounded ${syncCls}`},syncLabel)
@@ -537,7 +546,7 @@ function SolarApp(){
         )
       ),
       // Rodapé com versão
-      h('p',{className:'text-center text-[9px] text-slate-700 pt-1 pb-2 shrink-0'},'KV Arquitetos · Sun Path 3D · vG31')
+      h('p',{className:'text-center text-[9px] text-slate-700 pt-1 pb-2 shrink-0'},'KV Arquitetos · Sun Path 3D · vG32')
     )
   );
 }
