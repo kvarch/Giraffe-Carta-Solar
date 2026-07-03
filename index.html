@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Sun Path 3D · KV [vG26]</title>
+  <title>Sun Path 3D · KV [vG27]</title>
   <link href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -194,22 +194,45 @@ function liveFeatures(lat,lng,doy,hr,radius){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  GERENCIADOR DE RAW SECTIONS — cria/deleta em ciclo (único mecanismo 3D)
+//  GERENCIADOR DE RAW SECTIONS — deleção por TAG (idempotente, sem duplicar)
+//
+//  Cada feature recebe sp_tag ('sp-chart' | 'sp-live') e layerId próprio.
+//  Antes de criar, TODAS as sections existentes com a mesma tag são deletadas
+//  lendo giraffeState.get('rawSections') — garante zero duplicação mesmo se
+//  o retorno de createRawSections não trouxer os IDs.
 // ══════════════════════════════════════════════════════════════════════════
-async function replaceSections(idsRef,feats){
-  // 1. Deleta as sections do ciclo anterior
-  if(idsRef.current?.length){
-    try{await rpc.invoke('deleteRawSections',[idsRef.current]);}catch(e){console.warn('[vG26] delete:',e?.message);}
-    idsRef.current=[];
-  }
-  if(!feats.length)return;
-  // 2. Cria as novas — createRawSections retorna array de IDs
+async function deleteByTag(tag){
   try{
-    const clean=JSON.parse(JSON.stringify(feats));
-    const ids=await rpc.invoke('createRawSections',[clean]);
-    idsRef.current=Array.isArray(ids)?ids.filter(x=>typeof x==='string'):[];
-    console.log(`[vG26] ✓ ${idsRef.current.length} sections criadas`);
-  }catch(e){console.error('[vG26] create:',e?.message);idsRef.current=[];}
+    const rs=giraffeState.get('rawSections');
+    const ids=(rs?.features||[])
+      .filter(f=>f?.properties?.sp_tag===tag)
+      .map(f=>f?.properties?.id||f?.id)
+      .filter(Boolean);
+    if(ids.length){
+      await rpc.invoke('deleteRawSections',[ids]);
+      console.log(`[vG27] ✗ ${ids.length} sections '${tag}' deletadas`);
+    }
+  }catch(e){console.warn('[vG27] deleteByTag:',e?.message);}
+}
+
+async function replaceSections(tag,layerName,feats){
+  await deleteByTag(tag);
+  if(!feats.length)return;
+  const prep=lid=>JSON.parse(JSON.stringify(feats)).map(f=>{
+    f.properties={...f.properties,sp_tag:tag,layerId:lid};
+    return f;
+  });
+  try{
+    // Tenta criar no layer nomeado (separa carta e trajetória em layers distintos)
+    await rpc.invoke('createRawSections',[prep(layerName)]);
+    console.log(`[vG27] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
+  }catch(e1){
+    try{
+      // Fallback: layer 'default' (sempre aceito)
+      await rpc.invoke('createRawSections',[prep('default')]);
+      console.log(`[vG27] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
+    }catch(e2){console.error('[vG27] create:',e2?.message);}
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -264,7 +287,7 @@ function buildGLB(groups){
     acc.push({bufferView:bvI+1,componentType:5123,count:g.indices.length,type:'SCALAR'});
     meshes.push({primitives:[{attributes:{POSITION:acI},indices:acI+1,material:i}]});nodes.push({mesh:i});bvI+=2;acI+=2;
   }
-  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG26'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
+  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG27'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
   let jsonStr=JSON.stringify(gltf);while(jsonStr.length%4!==0)jsonStr+=' ';
   const jsonBytes=new TextEncoder().encode(jsonStr);
   const totalLen=12+8+jsonBytes.length+8+tb;
@@ -330,8 +353,6 @@ function SolarApp(){
   const sunNow=useMemo(()=>calcSun(lat,lng,doy,hr),[lat,lng,doy,hr]);
   const effRad=Math.round(rad*scale);
   const syncT=useRef(null),liveT=useRef(null);
-  const chartIds=useRef([]);   // sections da carta permanente
-  const liveIds=useRef([]);    // sections da trajetória live
 
   // Centro inicial
   useEffect(()=>{(async()=>{try{const b=await rpc.invoke('getMapBounds',[]);const ring=b?.features?.[0]?.geometry?.coordinates?.[0];if(!ring)return;const lo=ring.map(c=>c[0]),la=ring.map(c=>c[1]);setLng(parseFloat(((Math.min(...lo)+Math.max(...lo))/2).toFixed(6)));setLat(parseFloat(((Math.min(...la)+Math.max(...la))/2).toFixed(6)));}catch{}})();},[]);
@@ -342,19 +363,19 @@ function SolarApp(){
   // ── LIVE: trajetória + sol — atualização automática via rawSections ──
   useEffect(()=>{
     if(!liveOn){
-      if(liveIds.current.length)replaceSections(liveIds,[]);
+      deleteByTag('sp-live');
       return;
     }
     if(liveT.current)clearTimeout(liveT.current);
     liveT.current=setTimeout(()=>{
-      replaceSections(liveIds,liveFeatures(lat,lng,doy,hr,effRad));
+      replaceSections('sp-live','Sun Path - Dia',liveFeatures(lat,lng,doy,hr,effRad));
     },400);
     return()=>clearTimeout(liveT.current);
   },[lat,lng,doy,hr,effRad,liveOn]);
 
   // ── AÇÃO 1: Centralizar (seleção → drawPoint) ──
   const handleCenter=async()=>{
-    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG26] ✓ Centro via ${src}`);};
+    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG27] ✓ Centro via ${src}`);};
     const centOf=feats=>{try{const v=(feats||[]).filter(f=>{const g=f?.geometry||f;return g?.type&&g?.coordinates;}).map(f=>f.type==='Feature'?f:{type:'Feature',geometry:f.geometry||f,properties:{}});if(!v.length)return null;return turf.centroid({type:'FeatureCollection',features:v});}catch{return null;}};
     try{
       const sf=giraffeState.get('selectedFeatures');
@@ -367,9 +388,9 @@ function SolarApp(){
         const pt=await rpc.invoke('drawPoint',[]);
         const g=pt?.geometry||pt,coords=g?.coordinates||g;
         if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint');
-      }catch(e){console.warn('[vG26] drawPoint:',e?.message);}
+      }catch(e){console.warn('[vG27] drawPoint:',e?.message);}
       setPicking(false);
-    }catch(e){setPicking(false);console.warn('[vG26]',e?.message);}
+    }catch(e){setPicking(false);console.warn('[vG27]',e?.message);}
   };
 
   // ── AÇÃO 2: Gerar carta solar permanente ──
@@ -377,8 +398,8 @@ function SolarApp(){
     if(chartBusy)return;setChartBusy(true);
     try{
       const feats=[...compassFeatures(lat,lng,effRad),...meshFeatures(lat,lng,effRad,doy)];
-      await replaceSections(chartIds,feats);
-      alert(`✓ Carta solar criada (${chartIds.current.length} elementos 3D editáveis)`);
+      await replaceSections('sp-chart','Sun Path - Carta',feats);
+      alert(`✓ Carta solar 3D criada (${feats.length} elementos editáveis)`);
     }catch(e){console.error(e);alert('Erro: '+e?.message);}
     setChartBusy(false);
   };
@@ -390,7 +411,7 @@ function SolarApp(){
   return h('div',{className:'h-screen flex flex-col p-2 gap-2 bg-[#0f1117]'},
     h('div',{className:'flex items-center justify-between border-b border-slate-800 pb-2 shrink-0'},
       h('div',null,
-        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG26]'),
+        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG27]'),
         h('p',{className:'text-[10px] text-slate-600'},`${lat.toFixed(4)}° · ${lng.toFixed(4)}°${scale!==1?` · ×${scale.toFixed(1)}=${effRad}m`:''}`)
       ),
       syncLabel&&h('span',{className:`text-[9px] px-1.5 py-0.5 bg-slate-900 rounded ${syncCls}`},syncLabel)
@@ -444,7 +465,9 @@ function SolarApp(){
         h('button',{onClick:()=>{if(glbBusy)return;setGlbBusy(true);setTimeout(()=>{downloadGLB(lat,lng,rad);setGlbBusy(false);},100);},disabled:glbBusy,
           className:`w-full py-1.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-400 text-[10px] font-bold uppercase tracking-wider hover:bg-sky-500/20 transition-colors ${glbBusy?'opacity-50':''}`},
           glbBusy?'⟳ GLB...':'⇩ Baixar GLB (Rhino/Blender)')
-      )
+      ),
+      // Rodapé com versão
+      h('p',{className:'text-center text-[9px] text-slate-700 pt-1 pb-2 shrink-0'},'KV Arquitetos · Sun Path 3D · vG27')
     )
   );
 }
