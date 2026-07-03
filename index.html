@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Sun Path 3D · KV [vG35]</title>
+  <title>Sun Path 3D · KV [vG36]</title>
   <link href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -128,61 +128,25 @@ function arcCoords3D(lat,lng,doy,radius,step=0.04){
 //     preservando o formato encontrado (timestamp, ISO, objeto, ângulo)
 //  2. Injeta também os campos canônicos (sunAzimuth/sunAltitude/sun{...})
 //  3. Loga os campos detectados em window.__kvSunFields para diagnóstico
+// ── SYNC DEFINITIVO ──
+// Campo real descoberto via diagnóstico: view.details.solarDate
+// Formato: Date.toString() → "Sun Dec 21 2025 16:00:00 GMT-0300 (...)"
+// activateViewLayers lê esse campo e move o sol/sombras do mapa.
 async function syncGiraffeSun(az,alt,doy,hr){
   if(alt<-5)return{ok:false,why:'night'};
   const views=giraffeState.get('views')||[];if(!views.length)return{ok:false,why:'no_views'};
   try{
     const v=JSON.parse(JSON.stringify(views[0]));
-    delete v.layerTree;delete v.layers;
+    delete v.layerTree;delete v.layers;  // não restaurar estado de layers
 
-    // ── DIAGNÓSTICO: expor a estrutura real da view (uma vez) ──
-    if(!window.__kvViewLogged){
-      window.__kvViewLogged=true;
-      window.__kvView=JSON.parse(JSON.stringify(views[0]));
-      console.log('[vG35] 🔍 CHAVES DA VIEW:',Object.keys(views[0]).join(', '));
-      console.log('[vG35] 🔍 Para inspecionar a view completa digite: copy(JSON.stringify(window.__kvView,null,2))');
-    }
-
+    // Data/hora do estudo no formato Date.toString() (o mesmo do campo original)
     const Y=new Date().getFullYear();
     const dt=new Date(Y,0,doy,Math.floor(hr),Math.round((hr%1)*60));
+    v.details={...(v.details||{}),solarDate:dt.toString()};
 
-    // Varredura PROFUNDA (2 níveis): sun, shadow, time, date, light, day, hour
-    const found=[];
-    const CAND=/sun|shadow|light|daylight|time|date|hour/i;
-    const patchDeep=(obj,path='')=>{
-      if(!obj||typeof obj!=='object')return;
-      for(const k of Object.keys(obj)){
-        const val=obj[k],p=path?path+'.'+k:k;
-        if(CAND.test(k)){
-          found.push(p+':'+(typeof val)+(typeof val==='number'?'='+val:typeof val==='string'?'='+String(val).slice(0,30):''));
-          if(typeof val==='number'){
-            obj[k]=val>1e12?dt.getTime():(/alt/i.test(k)?alt:/az/i.test(k)?az:val>1e12?dt.getTime():obj[k]);
-            if(val>1e12)obj[k]=dt.getTime();
-          }else if(typeof val==='string'&&/\d{4}-\d{2}/.test(val)){
-            obj[k]=dt.toISOString();
-          }else if(val&&typeof val==='object'&&path===''){
-            patchDeep(val,p);  // desce 1 nível
-            if('azimuth'in val)val.azimuth=az;
-            if('altitude'in val)val.altitude=alt;
-          }
-        }else if(val&&typeof val==='object'&&path===''){
-          patchDeep(val,p);  // varre objetos aninhados de 1º nível também
-        }
-      }
-    };
-    patchDeep(v);
-    window.__kvSunFields=found;
-    if(found.length)console.log('[vG35] 🔍 campos candidatos:',found.join(' | '));
-    else console.log('[vG35] ⚠ NENHUM campo de sol/tempo na view — o sol pode não ser controlável via view');
-
-    const payload={...v,
-      sun:{...(v.sun||{}),azimuth:az,altitude:alt,time:dt.getTime()},
-      sunAzimuth:az,sunAltitude:alt,
-      sunTime:dt.getTime(),sunDate:dt.toISOString(),
-    };
-    await rpc.invoke('activateViewLayers',[payload]);
+    await rpc.invoke('activateViewLayers',[v]);
     return{ok:true};
-  }catch(e){console.warn('[vG35] sync:',e?.message);return{ok:false,why:'error'};}
+  }catch(e){console.warn('[vG36] sync:',e?.message);return{ok:false,why:'error'};}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -289,9 +253,9 @@ async function deleteByTag(tag){
       .filter(Boolean);
     if(ids.length){
       await rpc.invoke('deleteRawSections',[ids]);
-      console.log(`[vG35] ✗ ${ids.length} sections '${tag}' deletadas`);
+      console.log(`[vG36] ✗ ${ids.length} sections '${tag}' deletadas`);
     }
-  }catch(e){console.warn('[vG35] deleteByTag:',e?.message);}
+  }catch(e){console.warn('[vG36] deleteByTag:',e?.message);}
 }
 
 async function replaceSections(tag,layerName,feats){
@@ -304,13 +268,13 @@ async function replaceSections(tag,layerName,feats){
   try{
     // Tenta criar no layer nomeado (separa carta e trajetória em layers distintos)
     await rpc.invoke('createRawSections',[prep(layerName)]);
-    console.log(`[vG35] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
+    console.log(`[vG36] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
   }catch(e1){
     try{
       // Fallback: layer 'default' (sempre aceito)
       await rpc.invoke('createRawSections',[prep('default')]);
-      console.log(`[vG35] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
-    }catch(e2){console.error('[vG35] create:',e2?.message);}
+      console.log(`[vG36] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
+    }catch(e2){console.error('[vG36] create:',e2?.message);}
   }
 }
 
@@ -420,7 +384,7 @@ function buildGLB(groups){
     acc.push({bufferView:bvI+1,componentType:5123,count:g.indices.length,type:'SCALAR'});
     meshes.push({primitives:[{attributes:{POSITION:acI},indices:acI+1,material:i}]});nodes.push({mesh:i});bvI+=2;acI+=2;
   }
-  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG35'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
+  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG36'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
   let jsonStr=JSON.stringify(gltf);while(jsonStr.length%4!==0)jsonStr+=' ';
   const jsonBytes=new TextEncoder().encode(jsonStr);
   const totalLen=12+8+jsonBytes.length+8+tb;
@@ -513,7 +477,7 @@ function SolarApp(){
 
   // ── AÇÃO 1: Centralizar (seleção → drawPoint) ──
   const handleCenter=async()=>{
-    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG35] ✓ Centro via ${src}`);};
+    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG36] ✓ Centro via ${src}`);};
     const centOf=feats=>{try{const v=(feats||[]).filter(f=>{const g=f?.geometry||f;return g?.type&&g?.coordinates;}).map(f=>f.type==='Feature'?f:{type:'Feature',geometry:f.geometry||f,properties:{}});if(!v.length)return null;return turf.centroid({type:'FeatureCollection',features:v});}catch{return null;}};
     try{
       const sf=giraffeState.get('selectedFeatures');
@@ -526,9 +490,9 @@ function SolarApp(){
         const pt=await rpc.invoke('drawPoint',[]);
         const g=pt?.geometry||pt,coords=g?.coordinates||g;
         if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint');
-      }catch(e){console.warn('[vG35] drawPoint:',e?.message);}
+      }catch(e){console.warn('[vG36] drawPoint:',e?.message);}
       setPicking(false);
-    }catch(e){setPicking(false);console.warn('[vG35]',e?.message);}
+    }catch(e){setPicking(false);console.warn('[vG36]',e?.message);}
   };
 
   // ── AÇÃO 2: Baixar carta solar GLB (inserção manual no Giraffe) ──
@@ -549,7 +513,7 @@ function SolarApp(){
   return h('div',{className:'h-screen flex flex-col p-2 gap-2 bg-[#0f1117]'},
     h('div',{className:'flex items-center justify-between border-b border-slate-800 pb-2 shrink-0'},
       h('div',null,
-        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG35]'),
+        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG36]'),
         h('p',{className:'text-[10px] text-slate-600'},`${lat.toFixed(4)}° · ${lng.toFixed(4)}°${scale!==1?` · ×${scale.toFixed(1)}=${effRad}m`:''}`)
       ),
       syncLabel&&h('span',{className:`text-[9px] px-1.5 py-0.5 bg-slate-900 rounded ${syncCls}`},syncLabel)
@@ -602,7 +566,7 @@ function SolarApp(){
         )
       ),
       // Rodapé com versão
-      h('p',{className:'text-center text-[9px] text-slate-700 pt-1 pb-2 shrink-0'},'KV Arquitetos · Sun Path 3D · vG35')
+      h('p',{className:'text-center text-[9px] text-slate-700 pt-1 pb-2 shrink-0'},'KV Arquitetos · Sun Path 3D · vG36')
     )
   );
 }
