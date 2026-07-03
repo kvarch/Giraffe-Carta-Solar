@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Sun Path 3D · KV [vG29]</title>
+  <title>Sun Path 3D · KV [vG31]</title>
   <link href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -179,12 +179,14 @@ function meshFeatures(lat,lng,radius,currentDoy){
   return feats;
 }
 
-// Trajetória do dia + mastro + sol — SLABS + cilindros (todo ângulo visível)
+// Trajetória do dia + mastro + sol
+// Arco = slab (visível de todo ângulo, opacity 0.99 → sem sombra)
+// Sol = anéis de linha + point (estilo vG27, confirmado perfeito)
 function liveFeatures(lat,lng,doy,hr,radius){
   const w=Math.max(0.2,radius*0.003), t=Math.max(0.3,radius*0.005);
   const feats=[];
-  // Arco do dia — slab amarelo (h+=0.3, ~80 segmentos)
-  feats.push(...segSlab(arcCoords3D(lat,lng,doy,radius,0.3),COLOR.DAY_ARC,w,t,0.95));
+  // Arco do dia — slab amarelo com 99% de opacidade (sem sombra)
+  feats.push(...segSlab(arcCoords3D(lat,lng,doy,radius,0.3),COLOR.DAY_ARC,w,t,0.99));
 
   const s=calcSun(lat,lng,doy,hr);
   if(s.day){
@@ -193,7 +195,7 @@ function liveFeatures(lat,lng,doy,hr,radius){
     const[sLng,sLat]=local2geo(radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),lng,lat);
     const col=s.alt>20?COLOR.SUN[1]:COLOR.SUN[0];
 
-    // MASTRO: coluna cilíndrica única translúcida (opacity 0.35 → sem sombra)
+    // MASTRO: coluna cilíndrica translúcida (opacity 0.35 → sem sombra)
     if(coordZ>1){
       const pole=turf.buffer(turf.point([sLng,sLat]),Math.max(0.12,radius*0.0015),{units:'meters',steps:8});
       if(pole){
@@ -203,14 +205,17 @@ function liveFeatures(lat,lng,doy,hr,radius){
       }
     }
 
-    // SOL: cilindro achatado flutuante na altura exata (visível de todo ângulo)
-    const sunR=Math.max(1.5,radius*0.02);
-    const sun=turf.buffer(turf.point([sLng,sLat]),sunR,{units:'meters',steps:16});
-    if(sun){
-      sun.properties={usage:'generic 3d',color:col,fill:col,stroke:col,opacity:0.95,'fill-opacity':0.95,
-        baseHeight:Math.max(0,coordZ-sunR*0.4),_baseHeight:Math.max(0,coordZ-sunR*0.4),height:sunR*0.8};
-      feats.push(sun);
+    // SOL: dois anéis de linha + point central (estilo vG27)
+    for(const rr of[radius*0.02,radius*0.012]){
+      const ring=[];
+      for(let i=0;i<=24;i++){
+        const tt=(i/24)*2*Math.PI;
+        ring.push(local2geo(rr*Math.sin(tt),rr*Math.cos(tt),sLng,sLat));
+      }
+      feats.push({type:'Feature',geometry:{type:'LineString',coordinates:ring},
+        properties:{stroke:col,'stroke-width':5,'stroke-opacity':0.99,baseHeight:coordZ,_baseHeight:coordZ,height:0}});
     }
+    feats.push(turf.point([sLng,sLat],{fill:col,color:col,stroke:col,radius:5,baseHeight:coordZ,_baseHeight:coordZ,height:0}));
   }
   return feats;
 }
@@ -232,9 +237,9 @@ async function deleteByTag(tag){
       .filter(Boolean);
     if(ids.length){
       await rpc.invoke('deleteRawSections',[ids]);
-      console.log(`[vG29] ✗ ${ids.length} sections '${tag}' deletadas`);
+      console.log(`[vG31] ✗ ${ids.length} sections '${tag}' deletadas`);
     }
-  }catch(e){console.warn('[vG29] deleteByTag:',e?.message);}
+  }catch(e){console.warn('[vG31] deleteByTag:',e?.message);}
 }
 
 async function replaceSections(tag,layerName,feats){
@@ -247,13 +252,13 @@ async function replaceSections(tag,layerName,feats){
   try{
     // Tenta criar no layer nomeado (separa carta e trajetória em layers distintos)
     await rpc.invoke('createRawSections',[prep(layerName)]);
-    console.log(`[vG29] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
+    console.log(`[vG31] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
   }catch(e1){
     try{
       // Fallback: layer 'default' (sempre aceito)
       await rpc.invoke('createRawSections',[prep('default')]);
-      console.log(`[vG29] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
-    }catch(e2){console.error('[vG29] create:',e2?.message);}
+      console.log(`[vG31] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
+    }catch(e2){console.error('[vG31] create:',e2?.message);}
   }
 }
 
@@ -277,8 +282,42 @@ function buildRibbon(pts,halfW=0.12,vertical=true){
   return{positions:new Float32Array(pos),indices:new Uint16Array(idx),min:mn,max:mx};
 }
 function mergeRibbons(rs){rs=rs.filter(Boolean);if(!rs.length)return null;let tP=0,tI=0;for(const r of rs){tP+=r.positions.length;tI+=r.indices.length;}const P=new Float32Array(tP),I=new Uint16Array(tI);let pO=0,iO=0,vO=0,mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];for(const r of rs){P.set(r.positions,pO);for(let i=0;i<r.indices.length;i++)I[iO+i]=r.indices[i]+vO;pO+=r.positions.length;iO+=r.indices.length;vO+=r.positions.length/3;for(let j=0;j<3;j++){mn[j]=Math.min(mn[j],r.min[j]);mx[j]=Math.max(mx[j],r.max[j]);}}return{positions:P,indices:I,min:mn,max:mx};}
+// ── Stroke-font mínima para labels do GLB (segmentos [x1,y1]→[x2,y2] em grid 0..1) ──
+const GLYPH={
+  'N':[[[0,0],[0,1]],[[0,1],[1,0]],[[1,0],[1,1]]],
+  'S':[[[1,1],[0,1]],[[0,1],[0,.5]],[[0,.5],[1,.5]],[[1,.5],[1,0]],[[1,0],[0,0]]],
+  'L':[[[0,1],[0,0]],[[0,0],[1,0]]],
+  'O':[[[0,0],[0,1]],[[0,1],[1,1]],[[1,1],[1,0]],[[1,0],[0,0]]],
+  '0':[[[0,0],[0,1]],[[0,1],[1,1]],[[1,1],[1,0]],[[1,0],[0,0]]],
+  '1':[[[.5,0],[.5,1]],[[.2,.8],[.5,1]]],
+  '2':[[[0,1],[1,1]],[[1,1],[1,.5]],[[1,.5],[0,.5]],[[0,.5],[0,0]],[[0,0],[1,0]]],
+  '3':[[[0,1],[1,1]],[[1,1],[1,0]],[[1,0],[0,0]],[[.3,.5],[1,.5]]],
+  '4':[[[0,1],[0,.5]],[[0,.5],[1,.5]],[[1,1],[1,0]]],
+  '5':[[[1,1],[0,1]],[[0,1],[0,.5]],[[0,.5],[1,.5]],[[1,.5],[1,0]],[[1,0],[0,0]]],
+  '6':[[[1,1],[0,1]],[[0,1],[0,0]],[[0,0],[1,0]],[[1,0],[1,.5]],[[1,.5],[0,.5]]],
+  '7':[[[0,1],[1,1]],[[1,1],[.4,0]]],
+  '8':[[[0,0],[0,1]],[[0,1],[1,1]],[[1,1],[1,0]],[[1,0],[0,0]],[[0,.5],[1,.5]]],
+  '9':[[[1,.5],[0,.5]],[[0,.5],[0,1]],[[0,1],[1,1]],[[1,1],[1,0]]],
+  '°':[[[.15,.75],[.55,.75]],[[.55,.75],[.55,1.1]],[[.55,1.1],[.15,1.1]],[[.15,1.1],[.15,.75]]],
+};
+// Gera ribbons planos no chão para uma string centrada em (cx,cy) local
+function textRibbons(txt,cx,cy,hgt,halfW){
+  const ribs=[],cw=hgt*0.62,adv=hgt*0.82;
+  const w=txt.length*adv-((adv-cw));
+  let x0=cx-w/2;
+  for(const ch of txt){
+    const g=GLYPH[ch];
+    if(g)for(const[[ax,ay],[bx,by]]of g){
+      const rb=buildRibbon([[x0+ax*cw,cy-hgt/2+ay*hgt,0],[x0+bx*cw,cy-hgt/2+by*hgt,0]],halfW,false);
+      if(rb)ribs.push(rb);
+    }
+    x0+=adv;
+  }
+  return ribs;
+}
+
 function glbGeometry(lat,lng,radius){
-  const groups=[],hw=Math.max(0.12,radius*0.002);
+  const groups=[],hw=Math.max(0.25,radius*0.004);   // 2× mais grosso que antes
   const ss=lat<0?[355,17,46,79,107,137,172,199,229,266,292,321]:[172,199,229,266,292,321,355,17,46,79,107,137];
   for(let m=0;m<12;m++){
     const pts=[];for(let hh=0;hh<=24;hh+=0.15){const s=calcSun(lat,lng,ss[m],hh);if(!s.day&&s.alt<-1)continue;const a=s.alt*D2R,z=s.az*D2R;pts.push([radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),Math.max(0,radius*Math.sin(a))]);}
@@ -293,6 +332,18 @@ function glbGeometry(lat,lng,radius){
   for(const r of[radius,radius*0.95]){const pts=[];for(let i=0;i<=90;i++){const t=(i/90)*2*Math.PI;pts.push([r*Math.sin(t),r*Math.cos(t),0]);}const rb=buildRibbon(pts,hw,false);if(rb)cRibs.push(rb);}
   for(let az=0;az<360;az+=10){const iL=az%30===0,rT=iL?radius*0.90:radius*0.95,ar=az*D2R;const rb=buildRibbon([[rT*Math.sin(ar),rT*Math.cos(ar),0],[radius*Math.sin(ar),radius*Math.cos(ar),0]],iL?hw*0.8:hw*0.4,false);if(rb)cRibs.push(rb);}
   if(cRibs.length){const m=mergeRibbons(cRibs);if(m){m.color=[0.29,0.34,0.41];groups.push(m);}}
+
+  // ── Labels: N/S/L/O nos eixos + graus (com °) a cada 30° ──
+  const lblRibs=[],hgt=Math.max(2.5,radius*0.055);
+  for(let az=0;az<360;az+=30){
+    let txt;
+    if(az===0)txt='N';else if(az===90)txt='L';else if(az===180)txt='S';else if(az===270)txt='O';
+    else txt=az+'°';
+    const d=radius+hgt*1.3,ar=az*D2R;
+    lblRibs.push(...textRibbons(txt,d*Math.sin(ar),d*Math.cos(ar),hgt,hw*0.45));
+  }
+  if(lblRibs.length){const m=mergeRibbons(lblRibs);if(m){m.color=[0.88,0.90,0.93];groups.push(m);}}
+
   return groups;
 }
 function buildGLB(groups){
@@ -309,7 +360,7 @@ function buildGLB(groups){
     acc.push({bufferView:bvI+1,componentType:5123,count:g.indices.length,type:'SCALAR'});
     meshes.push({primitives:[{attributes:{POSITION:acI},indices:acI+1,material:i}]});nodes.push({mesh:i});bvI+=2;acI+=2;
   }
-  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG29'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
+  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG31'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
   let jsonStr=JSON.stringify(gltf);while(jsonStr.length%4!==0)jsonStr+=' ';
   const jsonBytes=new TextEncoder().encode(jsonStr);
   const totalLen=12+8+jsonBytes.length+8+tb;
@@ -370,7 +421,7 @@ function SolarApp(){
   const[picking,setPicking]=useState(false);
   const[chartBusy,setChartBusy]=useState(false);
   const[liveOn,setLiveOn]=useState(false);
-  const[glbBusy,setGlbBusy]=useState(false);
+  
   const seas=useMemo(()=>seasons(lat),[lat]);
   const sunNow=useMemo(()=>calcSun(lat,lng,doy,hr),[lat,lng,doy,hr]);
   const effRad=Math.round(rad*scale);
@@ -397,7 +448,7 @@ function SolarApp(){
 
   // ── AÇÃO 1: Centralizar (seleção → drawPoint) ──
   const handleCenter=async()=>{
-    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG29] ✓ Centro via ${src}`);};
+    const applyC=(cLng,cLat,src)=>{setLat(parseFloat(cLat.toFixed(6)));setLng(parseFloat(cLng.toFixed(6)));console.log(`[vG31] ✓ Centro via ${src}`);};
     const centOf=feats=>{try{const v=(feats||[]).filter(f=>{const g=f?.geometry||f;return g?.type&&g?.coordinates;}).map(f=>f.type==='Feature'?f:{type:'Feature',geometry:f.geometry||f,properties:{}});if(!v.length)return null;return turf.centroid({type:'FeatureCollection',features:v});}catch{return null;}};
     try{
       const sf=giraffeState.get('selectedFeatures');
@@ -410,39 +461,20 @@ function SolarApp(){
         const pt=await rpc.invoke('drawPoint',[]);
         const g=pt?.geometry||pt,coords=g?.coordinates||g;
         if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint');
-      }catch(e){console.warn('[vG29] drawPoint:',e?.message);}
+      }catch(e){console.warn('[vG31] drawPoint:',e?.message);}
       setPicking(false);
-    }catch(e){setPicking(false);console.warn('[vG29]',e?.message);}
+    }catch(e){setPicking(false);console.warn('[vG31]',e?.message);}
   };
 
-  // ── AÇÃO 2: Carta solar como GLB vinculado a um Point ──
-  // Cria UM ÚNICO Point section no centro com a propriedade `gltf` (data URL).
-  // O Giraffe renderiza o modelo 3D ancorado no ponto — leve (1 elemento) e
-  // graficamente rico. A propriedade `gltf` é a mesma usada pelo Flow
-  // (node "Get Gltf" → Write Feature Property "gltf").
-  const blobToDataURL=blob=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(blob);});
-
-  const handleChart=async()=>{
+  // ── AÇÃO 2: Baixar carta solar GLB (inserção manual no Giraffe) ──
+  // Fluxo: baixar → Giraffe UI → adicionar modelo 3D → posicionar no ponto central.
+  // Usa o raio efetivo (raio × escala) para alinhar com a trajetória live.
+  const handleChart=()=>{
     if(chartBusy)return;setChartBusy(true);
-    try{
-      // 1. Gera o GLB (coordenadas locais em metros, origem no centro)
-      const blob=buildGLB(glbGeometry(lat,lng,effRad));
-      const dataURL=await blobToDataURL(blob);
-      console.log(`[vG29] GLB ${(blob.size/1024).toFixed(0)}KB → dataURL ${(dataURL.length/1024).toFixed(0)}KB`);
-      // 2. Point único no centro com gltf vinculado
-      const pt=turf.point([lng,lat],{
-        gltf:dataURL,
-        scale:1,rotation:0,
-        usage:'generic 3d',
-        opacity:0.99,
-        color:COLOR.DAY_ARC,
-        label:'Carta Solar',
-      });
-      // 3. Substitui a carta anterior (deleção por tag) e cria
-      await replaceSections('sp-chart','Sun Path - Carta',[pt]);
-      alert(`✓ Carta solar GLB ancorada no ponto (1 elemento, ${(blob.size/1024).toFixed(0)}KB).\nSe o modelo não aparecer, verifique a propriedade "gltf" do ponto criado.`);
-    }catch(e){console.error(e);alert('Erro: '+e?.message);}
-    setChartBusy(false);
+    setTimeout(()=>{
+      try{downloadGLB(lat,lng,effRad);}catch(e){console.error(e);alert('Erro: '+e?.message);}
+      setChartBusy(false);
+    },100);
   };
 
   const syncLabel={ok:'✓ Sombras OK',syncing:'⟳',night:'☾ Noite',no_views:'⚠ View',error:'⚠ Erro',idle:''}[sync]||'';
@@ -452,7 +484,7 @@ function SolarApp(){
   return h('div',{className:'h-screen flex flex-col p-2 gap-2 bg-[#0f1117]'},
     h('div',{className:'flex items-center justify-between border-b border-slate-800 pb-2 shrink-0'},
       h('div',null,
-        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG29]'),
+        h('h1',{className:'text-sm font-semibold text-white'},'☀ LB Sun Path 3D [vG31]'),
         h('p',{className:'text-[10px] text-slate-600'},`${lat.toFixed(4)}° · ${lng.toFixed(4)}°${scale!==1?` · ×${scale.toFixed(1)}=${effRad}m`:''}`)
       ),
       syncLabel&&h('span',{className:`text-[9px] px-1.5 py-0.5 bg-slate-900 rounded ${syncCls}`},syncLabel)
@@ -490,10 +522,11 @@ function SolarApp(){
         h('button',{onClick:handleCenter,disabled:picking,
           className:`w-full py-2 rounded border text-[11px] font-bold uppercase tracking-wider transition-all ${picking?'border-red-500/60 bg-red-500/10 text-red-400 animate-pulse':'border-slate-600 bg-slate-800/40 text-slate-300 hover:border-slate-500'}`},
           picking?'⌖ Clique no mapa...':'① ⌖ Centralizar (seleção ou clique)'),
-        // AÇÃO 2: Carta permanente
+        // AÇÃO 2: Baixar GLB da carta (inserção manual)
         h('button',{onClick:handleChart,disabled:chartBusy,
           className:`w-full py-2 rounded border border-amber-500/30 bg-amber-500/10 text-amber-500 text-[11px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-colors ${chartBusy?'opacity-50 cursor-wait':''}`},
-          chartBusy?'⟳ Gerando GLB...':'② ☀ Carta Solar GLB no Ponto'),
+          chartBusy?'⟳ Gerando GLB...':'② ⇩ Baixar Carta Solar GLB'),
+        h('p',{className:'text-[9px] text-slate-600 -mt-1 text-center'},'Insira manualmente no Giraffe e posicione no ponto central'),
         // AÇÃO 3: Live trajetória + sol (toggle)
         h('div',{className:'flex items-center justify-between p-2 bg-[#111827] rounded-lg border border-emerald-500/20'},
           h('div',null,
@@ -501,14 +534,10 @@ function SolarApp(){
             h('p',{className:'text-[9px] text-slate-600'},liveOn?'Atualizando automaticamente':'Desligado')
           ),
           h('button',{className:`tg ${liveOn?'on':''}`,onClick:()=>setLiveOn(v=>!v)})
-        ),
-        // GLB
-        h('button',{onClick:()=>{if(glbBusy)return;setGlbBusy(true);setTimeout(()=>{downloadGLB(lat,lng,rad);setGlbBusy(false);},100);},disabled:glbBusy,
-          className:`w-full py-1.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-400 text-[10px] font-bold uppercase tracking-wider hover:bg-sky-500/20 transition-colors ${glbBusy?'opacity-50':''}`},
-          glbBusy?'⟳ GLB...':'⇩ Baixar GLB (Rhino/Blender)')
+        )
       ),
       // Rodapé com versão
-      h('p',{className:'text-center text-[9px] text-slate-700 pt-1 pb-2 shrink-0'},'KV Arquitetos · Sun Path 3D · vG29')
+      h('p',{className:'text-center text-[9px] text-slate-700 pt-1 pb-2 shrink-0'},'KV Arquitetos · Sun Path 3D · vG31')
     )
   );
 }
