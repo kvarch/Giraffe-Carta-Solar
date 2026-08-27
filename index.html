@@ -965,6 +965,8 @@ function SolarApp(){
   const syncT=useRef(null),liveT=useRef(null);
   // Últimas coordenadas do elemento rastreado — usado para detectar movimento
   const trackedCoords=useRef(null);
+  // Última seleção conhecida — atualizada por listener contínuo, sobrevive ao clique no iframe
+  const lastSelectedRef=useRef(null);  // { id, lng, lat }
 
   useEffect(()=>{
     if(saved.doy!=null&&saved.hr!=null){console.log('[vG43] ✓ estado restaurado do localStorage');return;}
@@ -1009,6 +1011,29 @@ function SolarApp(){
   useEffect(()=>{
     if(saved.lat!=null)return;
     (async()=>{try{const b=await rpc.invoke('getMapBounds',[]);const ring=b?.features?.[0]?.geometry?.coordinates?.[0];if(!ring)return;const lo=ring.map(c=>c[0]),la=ring.map(c=>c[1]);setLng(parseFloat(((Math.min(...lo)+Math.max(...lo))/2).toFixed(6)));setLat(parseFloat(((Math.min(...la)+Math.max(...la))/2).toFixed(6)));}catch{}})();
+  },[]);
+
+  // ── Listener contínuo de seleção — captura ID antes do clique no iframe desmarcar ──
+  // giraffeState.addListener dispara imediatamente quando selectedFeatures muda.
+  // Guardamos em ref (não state) para leitura síncrona no handleCenter.
+  useEffect(()=>{
+    const handler=()=>{
+      try{
+        const sf=giraffeState.get('selectedFeatures');
+        if(!sf?.length){return;}  // não limpa — mantém o último selecionado
+        const f=sf[0];
+        const fid=f?.properties?.id||f?.id||null;
+        if(!fid)return;
+        const c=f.geometry?.type==='Point'
+          ?f.geometry.coordinates
+          :(() => { try{return turf.centroid(f).geometry.coordinates;}catch{return null;} })();
+        if(!c)return;
+        lastSelectedRef.current={id:fid,lng:c[0],lat:c[1]};
+        console.log(`[vG43] 📌 seleção capturada: id=${fid}`);
+      }catch{}
+    };
+    giraffeState.addListener(['selectedFeatures'],handler);
+    return()=>giraffeState.removeListener?.(['selectedFeatures'],handler);
   },[]);
 
   // Sync sombras (sem layerTree → não pisca)
@@ -1075,43 +1100,45 @@ function SolarApp(){
 
   // ── AÇÃO 1: Centralizar (seleção → drawPoint) ──
   const handleCenter=async()=>{
-    // applyC: aplica coordenadas + guarda ID para rastreamento (null = sem rastreamento)
     const applyC=(cLng,cLat,src,fid=null)=>{
       setLat(parseFloat(cLat.toFixed(6)));
       setLng(parseFloat(cLng.toFixed(6)));
       setTrackedId(fid);
       trackedCoords.current=fid?[cLng,cLat]:null;
-      console.log(`[vG43] ✓ Centro via ${src}${fid?` · rastreando id=${fid}`:' · sem rastreamento (drawPoint)'}`);
+      console.log(`[vG43] ✓ Centro via ${src}${fid?` · rastreando id=${fid}`:' · sem rastreamento'}`);
     };
-    // Extrai ID de uma feature (rawSection): tenta várias keys conhecidas
-    const extractId=f=>f?.properties?.id||f?.properties?.elementId||f?.id||null;
+    // ── PRIORIDADE 1: lastSelectedRef (listener capturou antes do clique desmarcar) ──
+    if(lastSelectedRef.current){
+      const{id,lng:cLng,lat:cLat}=lastSelectedRef.current;
+      applyC(cLng,cLat,'listener (seleção)',id);
+      lastSelectedRef.current=null;  // consumido
+      return;
+    }
+    // ── PRIORIDADE 2: selectedFeatures ainda no state (raro, mas possível) ──
     const centOf=feats=>{try{const v=(feats||[]).filter(f=>{const g=f?.geometry||f;return g?.type&&g?.coordinates;}).map(f=>f.type==='Feature'?f:{type:'Feature',geometry:f.geometry||f,properties:{}});if(!v.length)return null;return turf.centroid({type:'FeatureCollection',features:v});}catch{return null;}};
+    const sf=giraffeState.get('selectedFeatures');
+    if(sf?.length){
+      const c=centOf(sf);
+      const fid=sf[0]?.properties?.id||sf[0]?.id||null;
+      if(c){applyC(...c.geometry.coordinates,'selectedFeatures',fid);return;}
+    }
+    // ── PRIORIDADE 3: getSelectedFeatures via RPC ──
     try{
-      // Tenta selectedFeatures do state primeiro
-      const sf=giraffeState.get('selectedFeatures');
-      if(sf?.length){
-        const c=centOf(sf);
-        if(c){applyC(...c.geometry.coordinates,'selectedFeatures',extractId(sf[0]));return;}
+      const f2=await rpc.invoke('getSelectedFeatures',[]);
+      if(f2?.length){
+        const c=centOf(f2);
+        const fid=f2[0]?.properties?.id||f2[0]?.id||null;
+        if(c){applyC(...c.geometry.coordinates,'getSelectedFeatures',fid);return;}
       }
-      // getSelectedFeature (singular — padrão docs)
-      try{
-        const f1=await rpc.invoke('getSelectedFeature',[]);
-        if(f1){const c=centOf([f1]);if(c){applyC(...c.geometry.coordinates,'getSelectedFeature',extractId(f1));return;}}
-      }catch{}
-      // getSelectedFeatures (plural)
-      try{
-        const f2=await rpc.invoke('getSelectedFeatures',[]);
-        if(f2?.length){const c=centOf(f2);if(c){applyC(...c.geometry.coordinates,'getSelectedFeatures',extractId(f2[0]));return;}}
-      }catch{}
-      // drawPoint: Giraffe pede clique — sem elemento → sem rastreamento
-      setPicking(true);
-      try{
-        const pt=await rpc.invoke('drawPoint',[]);
-        const g=pt?.geometry||pt,coords=g?.coordinates||g;
-        if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint',null);
-      }catch(e){console.warn('[vG43] drawPoint:',e?.message);}
-      setPicking(false);
-    }catch(e){setPicking(false);console.warn('[vG43]',e?.message);}
+    }catch{}
+    // ── PRIORIDADE 4: drawPoint — sem rastreamento ──
+    setPicking(true);
+    try{
+      const pt=await rpc.invoke('drawPoint',[]);
+      const g=pt?.geometry||pt,coords=g?.coordinates||g;
+      if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint',null);
+    }catch(e){console.warn('[vG43] drawPoint:',e?.message);}
+    setPicking(false);
   };
 
   // ── AÇÃO 2: Baixar carta solar GLB (inserção manual no Giraffe) ──
@@ -1163,6 +1190,7 @@ function SolarApp(){
         lines.push('RS[0] props keys: '+Object.keys(f?.properties||{}).join(', '));
       }
       lines.push('trackedId: '+(trackedId??'null'));
+      lines.push('lastSelectedRef: '+(lastSelectedRef.current?JSON.stringify(lastSelectedRef.current):'null'));
       const result=lines.join('\n');
       setDbg(result);
       console.log('[DEBUG]\n'+result);
