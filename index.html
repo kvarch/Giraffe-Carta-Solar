@@ -1129,6 +1129,46 @@ function SolarApp(){
   const syncCssClass={ok:'sync-badge sync-ok',syncing:'sync-badge sync-sync',night:'sync-badge sync-night',no_views:'sync-badge sync-warn',error:'sync-badge sync-warn',idle:''}[sync]||'';
   const eqAc=doy===79||doy===266;
 
+  // ── DEBUG: lê selectedFeatures e rawSections e exibe no UI ──
+  const[dbg,setDbg]=useState('');
+  const handleDebug=async()=>{
+    try{
+      const lines=[];
+      const sf=giraffeState.get('selectedFeatures');
+      lines.push('SF count: '+(sf?.length??0));
+      if(sf?.length){
+        const f=sf[0];
+        lines.push('SF[0].id: '+(f?.id??'—'));
+        lines.push('SF[0].props.id: '+(f?.properties?.id??'—'));
+        lines.push('SF[0].props.elementId: '+(f?.properties?.elementId??'—'));
+        lines.push('SF[0] props keys: '+Object.keys(f?.properties||{}).join(', '));
+      }
+      try{
+        const f1=await rpc.invoke('getSelectedFeature',[]);
+        lines.push('RPC getSelFeat: '+(f1?'OK':'null'));
+        if(f1){
+          lines.push('  .id: '+(f1?.id??'—'));
+          lines.push('  .props.id: '+(f1?.properties?.id??'—'));
+          lines.push('  props keys: '+Object.keys(f1?.properties||{}).join(', '));
+        }
+      }catch(e){lines.push('RPC getSelFeat erro: '+e?.message);}
+      const rs=giraffeState.get('rawSections');
+      const rsF=rs?.features||[];
+      lines.push('rawSections: '+rsF.length+' features');
+      const non=rsF.filter(f=>!f?.properties?.sp_tag);
+      if(non.length){
+        const f=non[0];
+        lines.push('RS[0].id: '+(f?.id??'—'));
+        lines.push('RS[0].props.id: '+(f?.properties?.id??'—'));
+        lines.push('RS[0] props keys: '+Object.keys(f?.properties||{}).join(', '));
+      }
+      lines.push('trackedId: '+(trackedId??'null'));
+      const result=lines.join('\n');
+      setDbg(result);
+      console.log('[DEBUG]\n'+result);
+    }catch(e){setDbg('Erro: '+e?.message);}
+  };
+
   return h('div',{style:{height:'100vh',display:'flex',flexDirection:'column'}},
     // ── HEADER KV ──
     h('header',{className:'app-header'},
@@ -1210,6 +1250,21 @@ function SolarApp(){
             'aria-label':'Ativar/desativar trajetória do dia no mapa','aria-pressed':liveOn})
         )
       ),
+      // Debug temporário
+      h('button',{
+        onClick:handleDebug,
+        style:{width:'100%',padding:'8px',background:'transparent',
+               border:'1px dashed var(--md-sys-color-outline-variant)',
+               color:'var(--md-sys-color-outline)',fontSize:'10px',
+               cursor:'pointer',fontFamily:'inherit',letterSpacing:'0.06em'}
+      },'🔍 Debug: inspecionar IDs (selecione elem. antes)'),
+      dbg&&h('pre',{
+        style:{fontSize:'9px',lineHeight:'1.5',padding:'8px',
+               background:'var(--md-sys-color-surface-container-low)',
+               border:'1px solid var(--md-sys-color-outline-variant)',
+               color:'var(--md-sys-color-on-surface-variant)',
+               whiteSpace:'pre-wrap',wordBreak:'break-all',margin:0}
+      },dbg),
       // Rodapé
       h('div',{className:'app-footer'},'KV Arquitetos · Sun Path 3D · Beta · vG43')
     )
