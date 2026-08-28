@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Sun Path 3D · KV [vG45]</title>
+  <title>Sun Path 3D · KV [vG46]</title>
   <link href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
   <style>
 /* ============================================================
@@ -643,7 +643,7 @@ async function syncGiraffeSun(az,alt,doy,hr){
 
     await rpc.invoke('activateViewLayers',[v]);
     return{ok:true};
-  }catch(e){console.warn('[vG45] sync:',e?.message);return{ok:false,why:'error'};}
+  }catch(e){console.warn('[vG46] sync:',e?.message);return{ok:false,why:'error'};}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -750,9 +750,9 @@ async function deleteByTag(tag){
       .filter(Boolean);
     if(ids.length){
       await rpc.invoke('deleteRawSections',[ids]);
-      console.log(`[vG45] ✗ ${ids.length} sections '${tag}' deletadas`);
+      console.log(`[vG46] ✗ ${ids.length} sections '${tag}' deletadas`);
     }
-  }catch(e){console.warn('[vG45] deleteByTag:',e?.message);}
+  }catch(e){console.warn('[vG46] deleteByTag:',e?.message);}
 }
 
 async function replaceSections(tag,layerName,feats){
@@ -765,13 +765,13 @@ async function replaceSections(tag,layerName,feats){
   try{
     // Tenta criar no layer nomeado (separa carta e trajetória em layers distintos)
     await rpc.invoke('createRawSections',[prep(layerName)]);
-    console.log(`[vG45] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
+    console.log(`[vG46] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
   }catch(e1){
     try{
       // Fallback: layer 'default' (sempre aceito)
       await rpc.invoke('createRawSections',[prep('default')]);
-      console.log(`[vG45] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
-    }catch(e2){console.error('[vG45] create:',e2?.message);}
+      console.log(`[vG46] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
+    }catch(e2){console.error('[vG46] create:',e2?.message);}
   }
 }
 
@@ -969,7 +969,7 @@ function SolarApp(){
   const lastSelectedRef=useRef(null);  // { id, lng, lat }
 
   useEffect(()=>{
-    if(saved.doy!=null&&saved.hr!=null){console.log('[vG45] ✓ estado restaurado do localStorage');return;}
+    if(saved.doy!=null&&saved.hr!=null){console.log('[vG46] ✓ estado restaurado do localStorage');return;}
     const readSolarDate=()=>{
       try{
         const sd=giraffeState.get('views')?.[0]?.details?.solarDate;
@@ -977,7 +977,7 @@ function SolarApp(){
         const d=new Date(sd);if(isNaN(d))return false;
         const dd=Math.floor((d-new Date(d.getFullYear(),0,0))/864e5);
         setDoy(Math.max(1,Math.min(365,dd)));setHr(d.getHours()+d.getMinutes()/60);
-        console.log(`[vG45] ✓ solarDate do projeto (1ª execução): ${d.toLocaleString('pt-BR')}`);
+        console.log(`[vG46] ✓ solarDate do projeto (1ª execução): ${d.toLocaleString('pt-BR')}`);
         return true;
       }catch{return false;}
     };
@@ -996,7 +996,7 @@ function SolarApp(){
         const d=new Date(sd);if(isNaN(d))return;
         if(Math.abs(d.getTime()-lastWrittenSolar)<60000)return;
         const dd=Math.floor((d-new Date(d.getFullYear(),0,0))/864e5);
-        console.log(`[vG45] ⇄ solarDate alterado no Giraffe: ${d.toLocaleString('pt-BR')}`);
+        console.log(`[vG46] ⇄ solarDate alterado no Giraffe: ${d.toLocaleString('pt-BR')}`);
         lastWrittenSolar=d.getTime();
         setDoy(Math.max(1,Math.min(365,dd)));setHr(d.getHours()+d.getMinutes()/60);
       }catch{}
@@ -1013,27 +1013,46 @@ function SolarApp(){
     (async()=>{try{const b=await rpc.invoke('getMapBounds',[]);const ring=b?.features?.[0]?.geometry?.coordinates?.[0];if(!ring)return;const lo=ring.map(c=>c[0]),la=ring.map(c=>c[1]);setLng(parseFloat(((Math.min(...lo)+Math.max(...lo))/2).toFixed(6)));setLat(parseFloat(((Math.min(...la)+Math.max(...la))/2).toFixed(6)));}catch{}})();
   },[]);
 
-  // ── Listener contínuo de seleção — captura ID antes do clique no iframe desmarcar ──
-  // giraffeState.addListener dispara imediatamente quando selectedFeatures muda.
-  // Guardamos em ref (não state) para leitura síncrona no handleCenter.
+  // ── POLLING de seleção (300ms) — captura ID enquanto a seleção EXISTE ──
+  // addListener não dispara neste ambiente; polling é a alternativa confiável.
+  // Lê selectedFeatures E getSelectedFeatures (RPC confirmado funcional).
+  // NÃO limpa quando fica vazio — mantém a última seleção válida para o handleCenter.
+  const[selInfo,setSelInfo]=useState(null);  // {id, lng, lat} — exibido no UI
   useEffect(()=>{
-    const handler=()=>{
+    let alive=true;
+    const capture=async()=>{
+      if(!alive)return;
       try{
+        let feats=null;
+        // 1. state selectedFeatures
         const sf=giraffeState.get('selectedFeatures');
-        if(!sf?.length){return;}  // não limpa — mantém o último selecionado
-        const f=sf[0];
+        if(sf?.length)feats=sf;
+        // 2. RPC getSelectedFeatures (retorna FeatureCollection)
+        if(!feats){
+          try{
+            const r=await rpc.invoke('getSelectedFeatures',[]);
+            const rf=r?.features||r;
+            if(Array.isArray(rf)&&rf.length)feats=rf;
+          }catch{}
+        }
+        if(!feats?.length)return;  // nada selecionado — mantém último
+        // Ignora elementos gerados pelo próprio app
+        const f=feats.find(x=>!x?.properties?.sp_tag);
+        if(!f)return;
         const fid=f?.properties?.id||f?.id||null;
         if(!fid)return;
-        const c=f.geometry?.type==='Point'
-          ?f.geometry.coordinates
-          :(() => { try{return turf.centroid(f).geometry.coordinates;}catch{return null;} })();
+        if(lastSelectedRef.current?.id===fid)return;  // já capturado
+        let c=null;
+        try{c=turf.centroid(f).geometry.coordinates;}catch{}
         if(!c)return;
         lastSelectedRef.current={id:fid,lng:c[0],lat:c[1]};
-        console.log(`[vG45] 📌 seleção capturada: id=${fid}`);
+        setSelInfo({id:fid,lng:c[0],lat:c[1]});
+        console.log(`[vG46] 📌 seleção capturada: id=${fid}`);
       }catch{}
     };
-    giraffeState.addListener(['selectedFeatures'],handler);
-    return()=>giraffeState.removeListener?.(['selectedFeatures'],handler);
+    const iv=setInterval(capture,300);
+    capture();
+    return()=>{alive=false;clearInterval(iv);};
   },[]);
 
   // Sync sombras (sem layerTree → não pisca)
@@ -1076,10 +1095,10 @@ function SolarApp(){
         // Tolerância: 0.000001° ≈ 0.11m — ignora ruído de float
         if(prev&&Math.abs(cLng-prev[0])<0.000001&&Math.abs(cLat-prev[1])<0.000001)return;
         trackedCoords.current=[cLng,cLat];
-        console.log(`[vG45] 📍 elemento movido → ${cLat.toFixed(6)}, ${cLng.toFixed(6)}`);
+        console.log(`[vG46] 📍 elemento movido → ${cLat.toFixed(6)}, ${cLng.toFixed(6)}`);
         setLat(parseFloat(cLat.toFixed(6)));
         setLng(parseFloat(cLng.toFixed(6)));
-      }catch(e){console.warn('[vG45] tracking:',e?.message);}
+      }catch(e){console.warn('[vG46] tracking:',e?.message);}
     },500);
     return()=>clearInterval(iv);
   },[liveOn,trackedId]);
@@ -1088,13 +1107,13 @@ function SolarApp(){
   const readSolarNow=()=>{
     try{
       const sd=giraffeState.get('views')?.[0]?.details?.solarDate;
-      if(!sd){console.warn('[vG45] view sem solarDate salvo');return;}
+      if(!sd){console.warn('[vG46] view sem solarDate salvo');return;}
       const d=new Date(sd);if(isNaN(d))return;
       const dd=Math.floor((d-new Date(d.getFullYear(),0,0))/864e5);
       lastWrittenSolar=d.getTime();  // evita eco no polling
       setDoy(Math.max(1,Math.min(365,dd)));
       setHr(d.getHours()+d.getMinutes()/60);
-      console.log(`[vG45] ↻ sol lido da view: ${d.toLocaleString('pt-BR')}`);
+      console.log(`[vG46] ↻ sol lido da view: ${d.toLocaleString('pt-BR')}`);
     }catch{}
   };
 
@@ -1108,12 +1127,18 @@ function SolarApp(){
       setLng(parseFloat(cLng.toFixed(6)));
       setTrackedId(fid);
       trackedCoords.current=fid?[cLng,cLat]:null;
-      console.log(`[vG45] ✓ Centro via ${src}${fid?` · rastreando id=${fid}`:' · sem rastreamento'}`);
+      console.log(`[vG46] ✓ Centro via ${src}${fid?` · rastreando id=${fid}`:' · sem rastreamento'}`);
     };
     const centOf=f=>{try{return turf.centroid(f).geometry.coordinates;}catch{return null;}};
+    // ── PRIORIDADE 1: seleção capturada pelo polling (antes do clique desmarcar) ──
+    if(lastSelectedRef.current){
+      const{id,lng:cLng,lat:cLat}=lastSelectedRef.current;
+      applyC(cLng,cLat,'seleção (polling)',id);
+      return;
+    }
+    // ── PRIORIDADE 2: pickRawSections (clique interativo) ──
     setPicking(true);
     try{
-      // pickRawSections: Giraffe pede clique num elemento do projeto → retorna FeatureCollection
       const picked=await rpc.invoke('pickRawSections',[]);
       const feats=(picked?.features||[]).filter(f=>!f?.properties?.sp_tag);  // ignora elementos do app
       if(feats.length){
@@ -1122,13 +1147,13 @@ function SolarApp(){
         const coords=centOf(f);
         if(coords){applyC(coords[0],coords[1],'pickRawSections',fid);setPicking(false);return;}
       }
-    }catch(e){console.warn('[vG45] pickRawSections:',e?.message);}
+    }catch(e){console.warn('[vG46] pickRawSections:',e?.message);}
     // Fallback: drawPoint (sem rastreamento — apenas coordenada)
     try{
       const pt=await rpc.invoke('drawPoint',[]);
       const g=pt?.geometry||pt,coords=g?.coordinates||g;
       if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint',null);
-    }catch(e){console.warn('[vG45] drawPoint:',e?.message);}
+    }catch(e){console.warn('[vG46] drawPoint:',e?.message);}
     setPicking(false);
   };
 
@@ -1189,10 +1214,18 @@ function SolarApp(){
         lines.push('getSelectedFeatures: '+(r?JSON.stringify(r).slice(0,80):'null'));
       }catch(e){lines.push('getSelectedFeatures erro: '+e?.message);}
       try{
-        // listar RPCs disponíveis se possível
-        const avail=Object.keys(rpc||{}).join(', ');
-        lines.push('rpc keys: '+avail.slice(0,120));
-      }catch(e){lines.push('rpc keys erro: '+e?.message);}
+        // Listar RPCs REGISTRADOS — confirma o que existe neste ambiente
+        const rp=rpc?.registeredProcedures;
+        let names=[];
+        if(rp instanceof Map) names=[...rp.keys()];
+        else if(rp instanceof Set) names=[...rp];
+        else if(Array.isArray(rp)) names=rp;
+        else if(rp&&typeof rp==='object') names=Object.keys(rp);
+        lines.push('RPCs registrados: '+names.length);
+        // Filtrar os relevantes para seleção
+        const rel=names.filter(n=>/pick|select|lasso|draw|isolat/i.test(n));
+        lines.push('  seleção: '+(rel.join(', ')||'(nenhum)'));
+      }catch(e){lines.push('registeredProcedures erro: '+e?.message);}
       const result=lines.join('\n');
       setDbg(result);
       console.log('[DEBUG]\n'+result);
@@ -1257,7 +1290,11 @@ function SolarApp(){
         h('button',{onClick:handleCenter,disabled:picking,
           className:`btn-center${picking?' picking':''}`,
           'aria-label':'Centralizar carta solar no terreno selecionado'},
-          picking?'⌖ Clique num elemento...':'① ⌖ Selecionar Elemento de Referência'),
+          picking
+            ?'⌖ Clique num elemento...'
+            :selInfo
+              ?'① ✓ Centralizar no elemento capturado'
+              :'① ⌖ Centralizar (selecione um elemento antes)'),
         // AÇÃO 2: Baixar GLB
         h('button',{onClick:handleChart,disabled:chartBusy,
           className:'btn-glb',
@@ -1318,7 +1355,7 @@ function SolarApp(){
                whiteSpace:'pre-wrap',wordBreak:'break-all',margin:0}
       },dbg),
       // Rodapé
-      h('div',{className:'app-footer'},'KV Arquitetos · Sun Path 3D · Beta · vG45')
+      h('div',{className:'app-footer'},'KV Arquitetos · Sun Path 3D · Beta · vG46')
     )
   );
 }
