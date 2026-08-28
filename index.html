@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Sun Path 3D · KV [vG50]</title>
+  <title>Sun Path 3D · KV [vG52]</title>
   <link href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
   <style>
 /* ============================================================
@@ -156,7 +156,7 @@ body {
   min-width: 0;
 }
 .brand-logo {
-  height: 28px;
+  height: 36px;
   width: auto;
   display: block;
   flex-shrink: 0;
@@ -242,9 +242,12 @@ body {
    ============================================================ */
 .chart-card {
   background-color: var(--md-sys-color-surface-container-lowest);
-  border: 1px solid var(--md-sys-color-outline-variant);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
   overflow: hidden;
   flex-shrink: 0;
+  margin-left: -8px;
+  margin-right: -8px;
 }
 .chart-footer {
   display: flex;
@@ -602,13 +605,13 @@ function segLine(coords3D,stroke,strokeWidth,strokeOpacity){
   return segs;
 }
 
-function arcCoords3D(lat,lng,doy,radius,step=0.04){
+function arcCoords3D(lat,lng,doy,radius,step=0.04,originZ=0){
   const pts=[];
   for(let hh=0;hh<=24;hh+=step){
     const s=calcSun(lat,lng,doy,hh);if(!s.day&&s.alt<-0.5)continue;
     const a=s.alt*D2R,z=s.az*D2R;
     const[ln,la]=local2geo(radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),lng,lat);
-    pts.push([ln,la,Math.max(0,radius*Math.sin(a))]);
+    pts.push([ln,la,Math.max(0,radius*Math.sin(a))+(originZ||0)]);
   }
   return pts;
 }
@@ -644,7 +647,7 @@ async function syncGiraffeSun(az,alt,doy,hr){
 
     await rpc.invoke('activateViewLayers',[v]);
     return{ok:true};
-  }catch(e){console.warn('[vG50] sync:',e?.message);return{ok:false,why:'error'};}
+  }catch(e){console.warn('[vG52] sync:',e?.message);return{ok:false,why:'error'};}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -696,16 +699,16 @@ function meshFeatures(lat,lng,radius,currentDoy){
 // Trajetória do dia + mastro + sol
 // Arco = slab (visível de todo ângulo, opacity 0.99 → sem sombra)
 // Sol = anéis de linha + point (estilo vG27, confirmado perfeito)
-function liveFeatures(lat,lng,doy,hr,radius){
+function liveFeatures(lat,lng,doy,hr,radius,originZ=0){
   const w=Math.max(0.2,radius*0.003), t=Math.max(0.3,radius*0.005);
   const feats=[];
   // Arco do dia — slab amarelo, alta resolução (h+=0.15 → ~160 segmentos), 99% opacidade
-  feats.push(...segSlab(arcCoords3D(lat,lng,doy,radius,0.15),COLOR.DAY_ARC,w,t,0.99));
+  feats.push(...segSlab(arcCoords3D(lat,lng,doy,radius,0.15,originZ),COLOR.DAY_ARC,w,t,0.99));
 
   const s=calcSun(lat,lng,doy,hr);
   if(s.day){
     const a=s.alt*D2R,z=s.az*D2R;
-    const coordZ=Math.max(0,radius*Math.sin(a));
+    const coordZ=Math.max(0,radius*Math.sin(a))+originZ;
     const[sLng,sLat]=local2geo(radius*Math.cos(a)*Math.sin(z),radius*Math.cos(a)*Math.cos(z),lng,lat);
     const col=s.alt>20?COLOR.SUN[1]:COLOR.SUN[0];
 
@@ -751,9 +754,9 @@ async function deleteByTag(tag){
       .filter(Boolean);
     if(ids.length){
       await rpc.invoke('deleteRawSections',[ids]);
-      console.log(`[vG50] ✗ ${ids.length} sections '${tag}' deletadas`);
+      console.log(`[vG52] ✗ ${ids.length} sections '${tag}' deletadas`);
     }
-  }catch(e){console.warn('[vG50] deleteByTag:',e?.message);}
+  }catch(e){console.warn('[vG52] deleteByTag:',e?.message);}
 }
 
 async function replaceSections(tag,layerName,feats){
@@ -766,13 +769,13 @@ async function replaceSections(tag,layerName,feats){
   try{
     // Tenta criar no layer nomeado (separa carta e trajetória em layers distintos)
     await rpc.invoke('createRawSections',[prep(layerName)]);
-    console.log(`[vG50] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
+    console.log(`[vG52] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
   }catch(e1){
     try{
       // Fallback: layer 'default' (sempre aceito)
       await rpc.invoke('createRawSections',[prep('default')]);
-      console.log(`[vG50] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
-    }catch(e2){console.error('[vG50] create:',e2?.message);}
+      console.log(`[vG52] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
+    }catch(e2){console.error('[vG52] create:',e2?.message);}
   }
 }
 
@@ -889,7 +892,7 @@ function buildGLB(groups){
     acc.push({bufferView:bvI+1,componentType:5123,count:g.indices.length,type:'SCALAR'});
     meshes.push({primitives:[{attributes:{POSITION:acI},indices:acI+1,material:i}]});nodes.push({mesh:i});bvI+=2;acI+=2;
   }
-  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG50'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
+  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG52'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
   let jsonStr=JSON.stringify(gltf);while(jsonStr.length%4!==0)jsonStr+=' ';
   const jsonBytes=new TextEncoder().encode(jsonStr);
   const totalLen=12+8+jsonBytes.length+8+tb;
@@ -966,6 +969,8 @@ function SolarApp(){
   const[liveOn,setLiveOn]=useState(saved.liveOn??false);
   // ID da rawSection selecionada para rastreamento de posição em tempo real
   const[trackedId,setTrackedId]=useState(null);
+  // Altura de base do elemento rastreado (metros) — somada ao z da trajetória
+  const[originZ,setOriginZ]=useState(0);
 
   const seas=useMemo(()=>seasons(lat),[lat]);
   const sunNow=useMemo(()=>calcSun(lat,lng,doy,hr),[lat,lng,doy,hr]);
@@ -977,7 +982,7 @@ function SolarApp(){
   const lastSelectedRef=useRef(null);  // { id, lng, lat }
 
   useEffect(()=>{
-    if(saved.doy!=null&&saved.hr!=null){console.log('[vG50] ✓ estado restaurado do localStorage');return;}
+    if(saved.doy!=null&&saved.hr!=null){console.log('[vG52] ✓ estado restaurado do localStorage');return;}
     const readSolarDate=()=>{
       try{
         const sd=giraffeState.get('views')?.[0]?.details?.solarDate;
@@ -985,7 +990,7 @@ function SolarApp(){
         const d=new Date(sd);if(isNaN(d))return false;
         const dd=Math.floor((d-new Date(d.getFullYear(),0,0))/864e5);
         setDoy(Math.max(1,Math.min(365,dd)));setHr(d.getHours()+d.getMinutes()/60);
-        console.log(`[vG50] ✓ solarDate do projeto (1ª execução): ${d.toLocaleString('pt-BR')}`);
+        console.log(`[vG52] ✓ solarDate do projeto (1ª execução): ${d.toLocaleString('pt-BR')}`);
         return true;
       }catch{return false;}
     };
@@ -1004,7 +1009,7 @@ function SolarApp(){
         const d=new Date(sd);if(isNaN(d))return;
         if(Math.abs(d.getTime()-lastWrittenSolar)<60000)return;
         const dd=Math.floor((d-new Date(d.getFullYear(),0,0))/864e5);
-        console.log(`[vG50] ⇄ solarDate alterado no Giraffe: ${d.toLocaleString('pt-BR')}`);
+        console.log(`[vG52] ⇄ solarDate alterado no Giraffe: ${d.toLocaleString('pt-BR')}`);
         lastWrittenSolar=d.getTime();
         setDoy(Math.max(1,Math.min(365,dd)));setHr(d.getHours()+d.getMinutes()/60);
       }catch{}
@@ -1014,7 +1019,7 @@ function SolarApp(){
 
   useEffect(()=>{
     try{localStorage.setItem('kv_sunpath',JSON.stringify({lat,lng,hr,doy,rad,liveOn}));}catch{}
-  },[lat,lng,hr,doy,rad,liveOn]);
+  },[lat,lng,hr,doy,rad,liveOn,originZ]);
 
   useEffect(()=>{
     if(saved.lat!=null)return;
@@ -1053,9 +1058,10 @@ function SolarApp(){
         let c=null;
         try{c=turf.centroid(f).geometry.coordinates;}catch{}
         if(!c)return;
-        lastSelectedRef.current={id:fid,lng:c[0],lat:c[1]};
-        setSelInfo({id:fid,lng:c[0],lat:c[1]});
-        console.log(`[vG50] 📌 seleção capturada: id=${fid}`);
+        const bh=f?.properties?._baseHeight??f?.properties?.baseHeight??0;
+        lastSelectedRef.current={id:fid,lng:c[0],lat:c[1],z:bh};
+        setSelInfo({id:fid,lng:c[0],lat:c[1],z:bh});
+        console.log(`[vG52] 📌 seleção capturada: id=${fid} z=${bh}m`);
       }catch{}
     };
     const iv=setInterval(capture,300);
@@ -1074,7 +1080,7 @@ function SolarApp(){
     }
     if(liveT.current)clearTimeout(liveT.current);
     liveT.current=setTimeout(()=>{
-      replaceSections('sp-live','Sun Path - Dia',liveFeatures(lat,lng,doy,hr,effRad));
+      replaceSections('sp-live','Sun Path - Dia',liveFeatures(lat,lng,doy,hr,effRad,originZ));
     },400);
     return()=>clearTimeout(liveT.current);
   },[lat,lng,doy,hr,effRad,liveOn]);
@@ -1099,14 +1105,16 @@ function SolarApp(){
         const c=turf.centroid(feat);
         if(!c)return;
         const[cLng,cLat]=c.geometry.coordinates;
+        const cZ=feat?.properties?._baseHeight??feat?.properties?.baseHeight??0;
         const prev=trackedCoords.current;
-        // Tolerância: 0.000001° ≈ 0.11m — ignora ruído de float
-        if(prev&&Math.abs(cLng-prev[0])<0.000001&&Math.abs(cLat-prev[1])<0.000001)return;
-        trackedCoords.current=[cLng,cLat];
-        console.log(`[vG50] 📍 elemento movido → ${cLat.toFixed(6)}, ${cLng.toFixed(6)}`);
+        // Tolerância: 0.000001° ≈ 0.11m em xy, 0.01m em z
+        if(prev&&Math.abs(cLng-prev[0])<0.000001&&Math.abs(cLat-prev[1])<0.000001&&Math.abs(cZ-prev[2])<0.01)return;
+        trackedCoords.current=[cLng,cLat,cZ];
+        console.log(`[vG52] 📍 elemento movido → ${cLat.toFixed(6)}, ${cLng.toFixed(6)}, z=${cZ}m`);
         setLat(parseFloat(cLat.toFixed(6)));
         setLng(parseFloat(cLng.toFixed(6)));
-      }catch(e){console.warn('[vG50] tracking:',e?.message);}
+        setOriginZ(cZ);
+      }catch(e){console.warn('[vG52] tracking:',e?.message);}
     },500);
     return()=>clearInterval(iv);
   },[liveOn,trackedId]);
@@ -1115,13 +1123,13 @@ function SolarApp(){
   const readSolarNow=()=>{
     try{
       const sd=giraffeState.get('views')?.[0]?.details?.solarDate;
-      if(!sd){console.warn('[vG50] view sem solarDate salvo');return;}
+      if(!sd){console.warn('[vG52] view sem solarDate salvo');return;}
       const d=new Date(sd);if(isNaN(d))return;
       const dd=Math.floor((d-new Date(d.getFullYear(),0,0))/864e5);
       lastWrittenSolar=d.getTime();  // evita eco no polling
       setDoy(Math.max(1,Math.min(365,dd)));
       setHr(d.getHours()+d.getMinutes()/60);
-      console.log(`[vG50] ↻ sol lido da view: ${d.toLocaleString('pt-BR')}`);
+      console.log(`[vG52] ↻ sol lido da view: ${d.toLocaleString('pt-BR')}`);
     }catch{}
   };
 
@@ -1130,18 +1138,19 @@ function SolarApp(){
   // e retorna a feature clicada com ID completo (sem problema de timing do iframe).
   // Fallback: drawPoint se pickRawSections não estiver disponível (sem rastreamento).
   const handleCenter=async()=>{
-    const applyC=(cLng,cLat,src,fid=null)=>{
+    const applyC=(cLng,cLat,src,fid=null,bh=0)=>{
       setLat(parseFloat(cLat.toFixed(6)));
       setLng(parseFloat(cLng.toFixed(6)));
       setTrackedId(fid);
-      trackedCoords.current=fid?[cLng,cLat]:null;
-      console.log(`[vG50] ✓ Centro via ${src}${fid?` · rastreando id=${fid}`:' · sem rastreamento'}`);
+      setOriginZ(bh);
+      trackedCoords.current=fid?[cLng,cLat,bh]:null;
+      console.log(`[vG52] ✓ Centro via ${src} z=${bh}m${fid?` · rastreando id=${fid}`:' · sem rastreamento'}`);
     };
     const centOf=f=>{try{return turf.centroid(f).geometry.coordinates;}catch{return null;}};
     // ── PRIORIDADE 1: seleção capturada pelo polling (antes do clique desmarcar) ──
     if(lastSelectedRef.current){
-      const{id,lng:cLng,lat:cLat}=lastSelectedRef.current;
-      applyC(cLng,cLat,'seleção (polling)',id);
+      const{id,lng:cLng,lat:cLat,z:bh=0}=lastSelectedRef.current;
+      applyC(cLng,cLat,'seleção (polling)',id,bh);
       return;
     }
     // ── PRIORIDADE 2: pickRawSections (clique interativo) ──
@@ -1155,13 +1164,13 @@ function SolarApp(){
         const coords=centOf(f);
         if(coords){applyC(coords[0],coords[1],'pickRawSections',fid);setPicking(false);return;}
       }
-    }catch(e){console.warn('[vG50] pickRawSections:',e?.message);}
+    }catch(e){console.warn('[vG52] pickRawSections:',e?.message);}
     // Fallback: drawPoint (sem rastreamento — apenas coordenada)
     try{
       const pt=await rpc.invoke('drawPoint',[]);
       const g=pt?.geometry||pt,coords=g?.coordinates||g;
       if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint',null);
-    }catch(e){console.warn('[vG50] drawPoint:',e?.message);}
+    }catch(e){console.warn('[vG52] drawPoint:',e?.message);}
     setPicking(false);
   };
 
@@ -1363,7 +1372,7 @@ function SolarApp(){
                whiteSpace:'pre-wrap',wordBreak:'break-all',margin:0}
       },dbg),
       // Rodapé
-      h('div',{className:'app-footer'},'KV Arquitetos · Sun Path 3D · Beta · vG50')
+      h('div',{className:'app-footer'},'Beta V 3.0 · © 2026 Königsberger Vannucchi')
     )
   );
 }
