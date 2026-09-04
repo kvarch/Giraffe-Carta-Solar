@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Sun Path 3D · KV [vG52]</title>
+  <title>Sun Path 3D · KV [vG53]</title>
   <link href="https://fonts.googleapis.com/css2?family=Hind:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
   <style>
 /* ============================================================
@@ -647,7 +647,7 @@ async function syncGiraffeSun(az,alt,doy,hr){
 
     await rpc.invoke('activateViewLayers',[v]);
     return{ok:true};
-  }catch(e){console.warn('[vG52] sync:',e?.message);return{ok:false,why:'error'};}
+  }catch(e){console.warn('[vG53] sync:',e?.message);return{ok:false,why:'error'};}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -754,9 +754,9 @@ async function deleteByTag(tag){
       .filter(Boolean);
     if(ids.length){
       await rpc.invoke('deleteRawSections',[ids]);
-      console.log(`[vG52] ✗ ${ids.length} sections '${tag}' deletadas`);
+      console.log(`[vG53] ✗ ${ids.length} sections '${tag}' deletadas`);
     }
-  }catch(e){console.warn('[vG52] deleteByTag:',e?.message);}
+  }catch(e){console.warn('[vG53] deleteByTag:',e?.message);}
 }
 
 async function replaceSections(tag,layerName,feats){
@@ -769,13 +769,13 @@ async function replaceSections(tag,layerName,feats){
   try{
     // Tenta criar no layer nomeado (separa carta e trajetória em layers distintos)
     await rpc.invoke('createRawSections',[prep(layerName)]);
-    console.log(`[vG52] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
+    console.log(`[vG53] ✓ ${feats.length} sections '${tag}' → layer '${layerName}'`);
   }catch(e1){
     try{
       // Fallback: layer 'default' (sempre aceito)
       await rpc.invoke('createRawSections',[prep('default')]);
-      console.log(`[vG52] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
-    }catch(e2){console.error('[vG52] create:',e2?.message);}
+      console.log(`[vG53] ✓ ${feats.length} sections '${tag}' → layer 'default' (fallback)`);
+    }catch(e2){console.error('[vG53] create:',e2?.message);}
   }
 }
 
@@ -892,7 +892,7 @@ function buildGLB(groups){
     acc.push({bufferView:bvI+1,componentType:5123,count:g.indices.length,type:'SCALAR'});
     meshes.push({primitives:[{attributes:{POSITION:acI},indices:acI+1,material:i}]});nodes.push({mesh:i});bvI+=2;acI+=2;
   }
-  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG52'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
+  const gltf={asset:{version:'2.0',generator:'KV Sun Path vG53'},extensionsUsed:['KHR_materials_unlit'],scene:0,scenes:[{nodes:nodes.map((_,i)=>i)}],nodes,meshes,accessors:acc,bufferViews:bv,buffers:[{byteLength:tb}],materials:mats};
   let jsonStr=JSON.stringify(gltf);while(jsonStr.length%4!==0)jsonStr+=' ';
   const jsonBytes=new TextEncoder().encode(jsonStr);
   const totalLen=12+8+jsonBytes.length+8+tb;
@@ -978,11 +978,12 @@ function SolarApp(){
   const syncT=useRef(null),liveT=useRef(null);
   // Últimas coordenadas do elemento rastreado — usado para detectar movimento
   const trackedCoords=useRef(null);
+  const rpcTick=useRef(0);  // throttle das chamadas RPC no polling de seleção
   // Última seleção conhecida — atualizada por listener contínuo, sobrevive ao clique no iframe
   const lastSelectedRef=useRef(null);  // { id, lng, lat }
 
   useEffect(()=>{
-    if(saved.doy!=null&&saved.hr!=null){console.log('[vG52] ✓ estado restaurado do localStorage');return;}
+    if(saved.doy!=null&&saved.hr!=null){console.log('[vG53] ✓ estado restaurado do localStorage');return;}
     const readSolarDate=()=>{
       try{
         const sd=giraffeState.get('views')?.[0]?.details?.solarDate;
@@ -990,7 +991,7 @@ function SolarApp(){
         const d=new Date(sd);if(isNaN(d))return false;
         const dd=Math.floor((d-new Date(d.getFullYear(),0,0))/864e5);
         setDoy(Math.max(1,Math.min(365,dd)));setHr(d.getHours()+d.getMinutes()/60);
-        console.log(`[vG52] ✓ solarDate do projeto (1ª execução): ${d.toLocaleString('pt-BR')}`);
+        console.log(`[vG53] ✓ solarDate do projeto (1ª execução): ${d.toLocaleString('pt-BR')}`);
         return true;
       }catch{return false;}
     };
@@ -1009,7 +1010,7 @@ function SolarApp(){
         const d=new Date(sd);if(isNaN(d))return;
         if(Math.abs(d.getTime()-lastWrittenSolar)<60000)return;
         const dd=Math.floor((d-new Date(d.getFullYear(),0,0))/864e5);
-        console.log(`[vG52] ⇄ solarDate alterado no Giraffe: ${d.toLocaleString('pt-BR')}`);
+        console.log(`[vG53] ⇄ solarDate alterado no Giraffe: ${d.toLocaleString('pt-BR')}`);
         lastWrittenSolar=d.getTime();
         setDoy(Math.max(1,Math.min(365,dd)));setHr(d.getHours()+d.getMinutes()/60);
       }catch{}
@@ -1019,7 +1020,7 @@ function SolarApp(){
 
   useEffect(()=>{
     try{localStorage.setItem('kv_sunpath',JSON.stringify({lat,lng,hr,doy,rad,liveOn}));}catch{}
-  },[lat,lng,hr,doy,rad,liveOn,originZ]);
+  },[lat,lng,hr,doy,rad,liveOn]);
 
   useEffect(()=>{
     if(saved.lat!=null)return;
@@ -1037,11 +1038,13 @@ function SolarApp(){
       if(!alive)return;
       try{
         let feats=null;
-        // 1. state selectedFeatures
+        // 1. state selectedFeatures (leitura local — sem custo de RPC)
         const sf=giraffeState.get('selectedFeatures');
         if(sf?.length)feats=sf;
-        // 2. RPC getSelectedFeatures (retorna FeatureCollection)
+        // 2. RPC getSelectedFeatures — só a cada 3 ciclos (reduz contenção com activateViewLayers)
         if(!feats){
+          rpcTick.current=(rpcTick.current+1)%3;
+          if(rpcTick.current!==0)return;
           try{
             const r=await rpc.invoke('getSelectedFeatures',[]);
             const rf=r?.features||r;
@@ -1061,10 +1064,10 @@ function SolarApp(){
         const bh=f?.properties?._baseHeight??f?.properties?.baseHeight??0;
         lastSelectedRef.current={id:fid,lng:c[0],lat:c[1],z:bh};
         setSelInfo({id:fid,lng:c[0],lat:c[1],z:bh});
-        console.log(`[vG52] 📌 seleção capturada: id=${fid} z=${bh}m`);
+        console.log(`[vG53] 📌 seleção capturada: id=${fid} z=${bh}m`);
       }catch{}
     };
-    const iv=setInterval(capture,300);
+    const iv=setInterval(capture,500);
     capture();
     return()=>{alive=false;clearInterval(iv);};
   },[]);
@@ -1083,7 +1086,7 @@ function SolarApp(){
       replaceSections('sp-live','Sun Path - Dia',liveFeatures(lat,lng,doy,hr,effRad,originZ));
     },400);
     return()=>clearTimeout(liveT.current);
-  },[lat,lng,doy,hr,effRad,liveOn]);
+  },[lat,lng,doy,hr,effRad,liveOn,originZ]);
 
   // ── RASTREAMENTO DE POSIÇÃO: polling 500ms quando live + trackedId ──
   // Lê rawSections, busca pelo id salvo, detecta mudança de coordenadas.
@@ -1110,11 +1113,11 @@ function SolarApp(){
         // Tolerância: 0.000001° ≈ 0.11m em xy, 0.01m em z
         if(prev&&Math.abs(cLng-prev[0])<0.000001&&Math.abs(cLat-prev[1])<0.000001&&Math.abs(cZ-prev[2])<0.01)return;
         trackedCoords.current=[cLng,cLat,cZ];
-        console.log(`[vG52] 📍 elemento movido → ${cLat.toFixed(6)}, ${cLng.toFixed(6)}, z=${cZ}m`);
+        console.log(`[vG53] 📍 elemento movido → ${cLat.toFixed(6)}, ${cLng.toFixed(6)}, z=${cZ}m`);
         setLat(parseFloat(cLat.toFixed(6)));
         setLng(parseFloat(cLng.toFixed(6)));
         setOriginZ(cZ);
-      }catch(e){console.warn('[vG52] tracking:',e?.message);}
+      }catch(e){console.warn('[vG53] tracking:',e?.message);}
     },500);
     return()=>clearInterval(iv);
   },[liveOn,trackedId]);
@@ -1123,14 +1126,51 @@ function SolarApp(){
   const readSolarNow=()=>{
     try{
       const sd=giraffeState.get('views')?.[0]?.details?.solarDate;
-      if(!sd){console.warn('[vG52] view sem solarDate salvo');return;}
+      if(!sd){console.warn('[vG53] view sem solarDate salvo');return;}
       const d=new Date(sd);if(isNaN(d))return;
       const dd=Math.floor((d-new Date(d.getFullYear(),0,0))/864e5);
       lastWrittenSolar=d.getTime();  // evita eco no polling
       setDoy(Math.max(1,Math.min(365,dd)));
       setHr(d.getHours()+d.getMinutes()/60);
-      console.log(`[vG52] ↻ sol lido da view: ${d.toLocaleString('pt-BR')}`);
+      console.log(`[vG53] ↻ sol lido da view: ${d.toLocaleString('pt-BR')}`);
     }catch{}
+  };
+
+  // ── Refresh manual: re-lê posição do elemento, re-sincroniza sol e trajetória ──
+  const[refreshing,setRefreshing]=useState(false);
+  const handleRefresh=async()=>{
+    if(refreshing)return;
+    setRefreshing(true);
+    try{
+      // 1. Re-ler posição/altura do elemento rastreado
+      if(trackedId){
+        const rs=giraffeState.get('rawSections');
+        const feats=rs?.features||[];
+        const feat=feats.find(f=>(f?.properties?.id||f?.id)===trackedId);
+        if(feat){
+          try{
+            const[cLng,cLat]=turf.centroid(feat).geometry.coordinates;
+            const cZ=feat?.properties?._baseHeight??feat?.properties?.baseHeight??0;
+            trackedCoords.current=[cLng,cLat,cZ];
+            setLat(parseFloat(cLat.toFixed(6)));
+            setLng(parseFloat(cLng.toFixed(6)));
+            setOriginZ(cZ);
+            console.log(`[vG53] ↻ posição relida: ${cLat.toFixed(6)}, ${cLng.toFixed(6)}, z=${cZ}m`);
+          }catch{}
+        }
+      }
+      // 2. Forçar re-sync do sol (independente do debounce)
+      setSync('syncing');
+      const r=await syncGiraffeSun(sunNow.az,sunNow.alt,doy,hr);
+      setSync(r.ok?'ok':r.why);
+      console.log(`[vG53] ↻ sync sol: ${r.ok?'OK':r.why}`);
+      // 3. Regenerar trajetória se ativa
+      if(liveOn){
+        await replaceSections('sp-live','Sun Path - Dia',liveFeatures(lat,lng,doy,hr,effRad,originZ));
+        console.log('[vG53] ↻ trajetória regenerada');
+      }
+    }catch(e){console.warn('[vG53] refresh:',e?.message);}
+    setRefreshing(false);
   };
 
   // ── AÇÃO 1: Centralizar ──
@@ -1144,7 +1184,7 @@ function SolarApp(){
       setTrackedId(fid);
       setOriginZ(bh);
       trackedCoords.current=fid?[cLng,cLat,bh]:null;
-      console.log(`[vG52] ✓ Centro via ${src} z=${bh}m${fid?` · rastreando id=${fid}`:' · sem rastreamento'}`);
+      console.log(`[vG53] ✓ Centro via ${src} z=${bh}m${fid?` · rastreando id=${fid}`:' · sem rastreamento'}`);
     };
     const centOf=f=>{try{return turf.centroid(f).geometry.coordinates;}catch{return null;}};
     // ── PRIORIDADE 1: seleção capturada pelo polling (antes do clique desmarcar) ──
@@ -1164,13 +1204,13 @@ function SolarApp(){
         const coords=centOf(f);
         if(coords){applyC(coords[0],coords[1],'pickRawSections',fid);setPicking(false);return;}
       }
-    }catch(e){console.warn('[vG52] pickRawSections:',e?.message);}
+    }catch(e){console.warn('[vG53] pickRawSections:',e?.message);}
     // Fallback: drawPoint (sem rastreamento — apenas coordenada)
     try{
       const pt=await rpc.invoke('drawPoint',[]);
       const g=pt?.geometry||pt,coords=g?.coordinates||g;
       if(Array.isArray(coords)&&coords.length>=2)applyC(coords[0],coords[1],'drawPoint',null);
-    }catch(e){console.warn('[vG52] drawPoint:',e?.message);}
+    }catch(e){console.warn('[vG53] drawPoint:',e?.message);}
     setPicking(false);
   };
 
@@ -1312,6 +1352,15 @@ function SolarApp(){
             :selInfo
               ?'① ✓ Centralizar no elemento capturado'
               :'① ⌖ Centralizar (selecione um elemento antes)'),
+        // Atualizar tudo (posição + sol + trajetória)
+        h('button',{onClick:handleRefresh,disabled:refreshing,
+          style:{width:'100%',minHeight:'40px',background:'transparent',
+                 border:'1px solid var(--md-sys-color-outline-variant)',
+                 color:'var(--md-sys-color-on-surface-variant)',fontFamily:'inherit',
+                 fontSize:'10px',fontWeight:600,letterSpacing:'0.10em',
+                 textTransform:'uppercase',cursor:refreshing?'wait':'pointer'},
+          'aria-label':'Atualizar posição, sol e trajetória'},
+          refreshing?'⟳ Atualizando...':'↻ Atualizar (posição · sol · trajetória)'),
         // AÇÃO 2: Baixar GLB
         h('button',{onClick:handleChart,disabled:chartBusy,
           className:'btn-glb',
